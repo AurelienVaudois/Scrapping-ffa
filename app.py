@@ -62,6 +62,7 @@ if search_term and len(search_term) >= 3:
 
         if df.empty:
             with st.spinner("Scraping en cours, cela peut prendre quelques secondes..."):
+                import traceback
                 try:
                     df = get_all_athlete_results(seq)
                     if not df.empty:
@@ -70,9 +71,10 @@ if search_term and len(search_term) >= 3:
                         save_results_to_sqlite(df, seq, db_path)
                         st.success("Scraping terminé et données ajoutées à la base.")
                     else:
-                        st.warning("Aucune donnée trouvée pour cet athlète.")
+                        st.warning("Aucune donnée trouvée pour cet athlète (scraping vide).")
                 except Exception as e:
                     st.error(f"Erreur lors du scraping : {e}")
+                    st.text(traceback.format_exc())
         else:
             st.success("Données chargées depuis la base.")
 
