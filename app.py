@@ -6,8 +6,6 @@ from src.utils.athlete_utils import get_all_athlete_results, save_results_to_sql
 from src.utils.file_utils import convert_time_to_seconds
 
 import os
-from bs4 import BeautifulSoup
-
 
 os.makedirs("data", exist_ok=True)
 db_path = "data/athle_results.sqlite"
@@ -64,39 +62,14 @@ if search_term and len(search_term) >= 3:
 
         if df.empty:
             with st.spinner("Scraping en cours, cela peut prendre quelques secondes..."):
-                import traceback
-                try:
-                    # Affiche l'URL de scraping pour debug
-                    st.info(f"Scraping URL : https://bases.athle.fr/asp.net/athletes.aspx?base=bilans&seq={seq}")
-                    # Récupère la page HTML brute pour debug
-                    import requests
-                    url = f"https://bases.athle.fr/asp.net/athletes.aspx?base=bilans&seq={seq}"
-                    response = requests.get(url)
-                    
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    select = soup.find('select', class_='selectMain')
-                    years = []
-                    if select:
-                        for option in select.find_all('option'):
-                            if 'saison=' in option.get('value', ''):
-                                # Extrait l'année de l'URL
-                                year = option.get('value').split('saison=')[-1]
-                                if year.isdigit():
-                                    years.append(year)
-                    
-                    st.code(years)
-                    # Lance le scraping normal
-                    df = get_all_athlete_results(seq)
-                    if not df.empty:
-                        db_path = "data/athle_results.sqlite"
-                        save_athlete_info(seq, name, club, sex, db_path)
-                        save_results_to_sqlite(df, seq, db_path)
-                        st.success("Scraping terminé et données ajoutées à la base.")
-                    else:
-                        st.warning("Aucune donnée trouvée pour cet athlète (scraping vide). Regardez le HTML ci-dessus pour diagnostiquer.")
-                except Exception as e:
-                    st.error(f"Erreur lors du scraping : {e}")
-                    st.text(traceback.format_exc())
+                df = get_all_athlete_results(seq)
+                if not df.empty:
+                    db_path = "data/athle_results.sqlite"
+                    save_athlete_info(seq, name, club, sex, db_path)
+                    save_results_to_sqlite(df, seq, db_path)
+                    st.success("Scraping terminé et données ajoutées à la base.")
+                else:
+                    st.warning("Aucune donnée trouvée pour cet athlète.")
         else:
             st.success("Données chargées depuis la base.")
 
