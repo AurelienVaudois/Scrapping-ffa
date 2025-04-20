@@ -1,34 +1,18 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+from sqlalchemy import create_engine
 from src.utils.http_utils import search_athletes
-from src.utils.athlete_utils import get_all_athlete_results, save_results_to_sqlite, save_athlete_info
+from src.utils.athlete_utils import get_all_athlete_results, save_results_to_postgres, save_athlete_info, clean_and_prepare_results_df
 from src.utils.file_utils import convert_time_to_seconds
-
 import os
 
-os.makedirs("data", exist_ok=True)
-db_path = "data/athle_results.sqlite"
-if not os.path.exists(db_path):
-    # Crée la base et les tables vides si besoin
-    conn = sqlite3.connect(db_path)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS results (
-            seq TEXT,
-            Club TEXT, Date TEXT, Epreuve TEXT, Tour TEXT, [Pl.] TEXT, [Perf.] TEXT, [Vt.] TEXT, [Niv.] TEXT, [Pts] TEXT, Ville TEXT, Annee TEXT,
-            UNIQUE(seq, Club, Date, Epreuve, Tour, [Pl.], [Perf.], [Vt.], [Niv.], [Pts], Ville, Annee)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS athletes (
-            seq TEXT PRIMARY KEY,
-            name TEXT,
-            club TEXT,
-            sex TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+try:
+    db_url = st.secrets["DB_URL"]
+except Exception:
+    from dotenv import load_dotenv
+    load_dotenv()
+    db_url = os.getenv("DB_URL")
+engine = create_engine(db_url)
 
 st.set_page_config(page_title="Athlé Analyse", layout="wide")
 st.title("Analyse des performances athlétisme")
@@ -53,9 +37,8 @@ if search_term and len(search_term) >= 3:
 
         @st.cache_data(show_spinner=False)
         def get_results_from_db(seq):
-            conn = sqlite3.connect("data/athle_results.sqlite")
-            df = pd.read_sql_query("SELECT * FROM results WHERE seq = ?", conn, params=(seq,))
-            conn.close()
+            query = "SELECT * FROM results WHERE seq = %(seq)s"
+            df = pd.read_sql_query(query, engine, params={"seq": seq})
             return df
 
         df = get_results_from_db(seq)
@@ -65,9 +48,9 @@ if search_term and len(search_term) >= 3:
                 try:
                     df = get_all_athlete_results(seq)
                     if not df.empty:
-                        db_path = "data/athle_results.sqlite"
-                        save_athlete_info(seq, name, club, sex, db_path)
-                        save_results_to_sqlite(df, seq, db_path)
+                        df = clean_and_prepare_results_df(df, seq)
+                        save_athlete_info(seq, name, club, sex, engine)
+                        save_results_to_postgres(df, seq, engine)
                         st.success("Scraping terminé et données ajoutées à la base.")
                     else:
                         st.warning("Aucune donnée trouvée pour cet athlète (scraping vide).")
@@ -75,30 +58,20 @@ if search_term and len(search_term) >= 3:
                     st.error(f"Erreur lors du scraping : {e}")
         else:
             st.success("Données chargées depuis la base.")
+            
 
         # Filtrer sur 800m et 800m Piste Courte
-        if not df.empty:
-            df_800 = df[df['Epreuve'].isin(['800m', '800m Piste Courte'])].copy()
+        if not df.empty and 'epreuve' in df.columns:
+            df_800 = df[df['epreuve'].isin(['800m', '800m Piste Courte'])].copy()
             if not df_800.empty:
-                # Créer la colonne full_date
-                from src.utils.file_utils import create_full_date
-                df_800['full_date'] = df_800.apply(create_full_date, axis=1)
-                df_800['full_date'] = pd.to_datetime(df_800['full_date'], format='%d/%m/%Y', errors='coerce')
-                # Création d'une variable Lieu
                 import numpy as np
-                df_800['Lieu'] = np.where(df_800.Epreuve == "800m Piste Courte", 'Indoor', 'Outdoor')
-                # Création d'une variable Annee
-                df_800['Annee'] = df_800['full_date'].dt.year
-                # Suppression des DFN et DNS
-                df_800 = df_800[~df_800['Perf.'].str.contains('|'.join(['DNS','DNF', 'AB']), na=False)]
-                # Conversion des perf en secondes
-                from src.utils.file_utils import convert_time_to_seconds
-                df_800['time'] = df_800['Perf.'].apply(convert_time_to_seconds)
-                df_800 = df_800.dropna(subset=['full_date', 'time'])
-                df_800 = df_800.sort_values('full_date')
-                # Calcul de la meilleure performance par année
-                best_performances = df_800[['Perf.','time','full_date','Annee']].sort_values('time', ascending=True).groupby('Annee').first().reset_index()
-                # Affichage du graphique seaborn
+                df_800['Lieu'] = np.where(df_800.epreuve == "800m Piste Courte", 'Indoor', 'Outdoor')
+                df_800['Annee'] = df_800['date'].dt.year
+                df_800 = df_800[~df_800['perf'].str.contains('|'.join(['DNS','DNF', 'AB']), na=False)]
+                df_800['time'] = df_800['perf'].apply(convert_time_to_seconds)
+                df_800 = df_800.dropna(subset=['date', 'time'])
+                df_800 = df_800.sort_values('date')
+                best_performances = df_800[['perf','time','date','Annee']].sort_values('time', ascending=True).groupby('Annee').first().reset_index()
                 import seaborn as sns
                 import matplotlib.pyplot as plt
                 import matplotlib
@@ -115,12 +88,12 @@ if search_term and len(search_term) >= 3:
                     centiseconds = int((x * 100) %100)
                     return f"{minutes}'{seconds:02d}''{centiseconds:02d}"
                 fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
-                scatter_plot = sns.scatterplot(data=df_800, x='full_date', y='time', hue='Annee', style='Lieu',
+                scatter_plot = sns.scatterplot(data=df_800, x='date', y='time', hue='Annee', style='Lieu',
                                  s=70, palette=medium_colors, ax=ax)
                 for _, row in best_performances.iterrows():
                     time_format = format_time(row['time'])
-                    ax.scatter(row['full_date'], row['time'], color='red', marker='s', s=100)
-                    ax.text(row['full_date'], row['time'], f"{time_format}", ha='center', va='top', fontsize=10, fontweight='bold')
+                    ax.scatter(row['date'], row['time'], color='red', marker='s', s=100)
+                    ax.text(row['date'], row['time'], f"{time_format}", ha='center', va='top', fontsize=10, fontweight='bold')
                 ax.set_xlabel("Année", fontweight='bold')
                 ax.set_ylabel("Performance", fontweight='bold')
                 ax.set_title(f"Evolution des performances sur 800m pour {name}", fontweight='bold')
@@ -133,7 +106,7 @@ if search_term and len(search_term) >= 3:
                 ax.grid(True)
                 plt.tight_layout()
                 st.pyplot(fig)
-                st.dataframe(df_800[['full_date', 'Perf.', 'time', 'Ville', 'Tour']].sort_values('full_date'), use_container_width=True)
+                st.dataframe(df_800[['date', 'perf', 'time', 'ville', 'tour']].sort_values('date'), use_container_width=True)
             else:
                 st.info("Aucune performance sur 800m trouvée pour cet athlète.")
         else:

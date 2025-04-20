@@ -7,3 +7,6 @@ matplotlib
 seaborn
 streamlit
 lxml
+psycopg2-binary
+sqlalchemy
+python-dotenv

@@ -1,8 +1,15 @@
+import os
+from datetime import datetime
+from sqlalchemy import create_engine, text
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import sqlite3
+from dotenv import load_dotenv
 from typing import List, Optional
+
+load_dotenv()
+db_url = os.getenv("DB_URL")
+engine = create_engine(db_url)
 
 
 def get_athlete_years(seq: str) -> List[str]:
@@ -74,77 +81,67 @@ def get_all_athlete_results(seq: str) -> pd.DataFrame:
         return pd.DataFrame(columns=['seq', 'Club', 'Date', 'Epreuve', 'Tour', 'Pl.', 'Perf.', 'Vt.', 'Niv.', 'Pts', 'Ville', 'Annee'])
 
 
-def save_athlete_info(seq: str, name: str, club: str, sex: str, db_path: str, table_name: str = 'athletes'):
+def save_athlete_info(seq: str, name: str, club: str, sex: str, engine, table_name: str = 'athletes'):
     """
-    Insère ou met à jour les informations d'un athlète dans la table athletes.
-    Args:
-        seq (str): Identifiant unique de l'athlète.
-        name (str): Nom de l'athlète.
-        club (str): Club de l'athlète.
-        sex (str): Sexe de l'athlète.
-        db_path (str): Chemin vers la base SQLite.
-        table_name (str): Nom de la table athletes.
+    Insère ou met à jour les informations d'un athlète dans la table athletes (PostgreSQL).
+    Met à jour la colonne last_update à chaque appel.
     """
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute(f'''
-        CREATE TABLE IF NOT EXISTS {table_name} (
-            seq TEXT PRIMARY KEY,
-            name TEXT,
-            club TEXT,
-            sex TEXT
-        )
-    ''')
-    cursor.execute(f'''
-        INSERT INTO {table_name} (seq, name, club, sex)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(seq) DO UPDATE SET name=excluded.name, club=excluded.club, sex=excluded.sex
-    ''', (seq, name, club, sex))
-    conn.commit()
-    conn.close()
+    now = datetime.utcnow()
+    with engine.begin() as conn:
+        conn.execute(text(f'''
+            INSERT INTO {table_name} (seq, name, club, sex, last_update)
+            VALUES (:seq, :name, :club, :sex, :last_update)
+            ON CONFLICT (seq) DO UPDATE SET
+                name=EXCLUDED.name,
+                club=EXCLUDED.club,
+                sex=EXCLUDED.sex,
+                last_update=EXCLUDED.last_update
+        '''), dict(seq=seq, name=name, club=club, sex=sex, last_update=now))
 
 
-def preprocess_results_df(df: pd.DataFrame) -> pd.DataFrame:
+def clean_and_prepare_results_df(df, seq):
     """
-    Nettoie le DataFrame des résultats :
-    - Supprime les doublons sur les colonnes clés
+    Nettoie et prépare le DataFrame pour insertion PostgreSQL :
+    - mapping des colonnes
+    - reconstitution de la date complète
+    - conversion des types
+    - gestion des NaN/NaT
     """
-    # Colonnes clés pour l'unicité
-    key_cols = ['seq', 'Club', 'Date', 'Epreuve', 'Tour', 'Pl.', 'Perf.', 'Vt.', 'Niv.', 'Pts', 'Ville', 'Annee']
-    for col in key_cols:
+    col_map = {
+        'Club': 'club', 'Date': 'date', 'Epreuve': 'epreuve', 'Tour': 'tour', 'Pl.': 'pl',
+        'Perf.': 'perf', 'Vt.': 'vt', 'Niv.': 'niv', 'Pts': 'pts', 'Ville': 'ville', 'Annee': 'annee', 'seq': 'seq'
+    }
+    df = df.rename(columns=col_map)
+    df['seq'] = seq
+    # Reconstitue la date complète avant conversion
+    if 'date' in df.columns and 'annee' in df.columns:
+        df['date_full'] = df['date'].astype(str).str.zfill(5) + '/' + df['annee'].astype(str)
+        df['date'] = pd.to_datetime(df['date_full'], format='%d/%m/%Y', errors='coerce')
+        df = df.drop(columns=['date_full'])
+    # Nettoyage des types et valeurs manquantes
+    for col in ['club', 'epreuve', 'tour', 'pl', 'perf', 'vt', 'niv', 'pts', 'ville']:
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str).str.strip()
-    # Supprime les doublons
-    df = df.drop_duplicates(subset=key_cols).reset_index(drop=True)
+
+    df = df.where(pd.notnull(df), None)
     return df
 
 
-def save_results_to_sqlite(df: pd.DataFrame, seq: str, db_path: str, table_name: str = 'results') -> int:
+def save_results_to_postgres(df: pd.DataFrame, seq: str, engine, table_name: str = 'results') -> int:
     """
-    Insère les résultats dans une base SQLite en évitant les doublons et en ajoutant la colonne seq.
-    Retourne le nombre de nouveaux résultats insérés.
+    Insère les résultats dans une base PostgreSQL en évitant les doublons et en ajoutant la colonne seq.
+    Utilise une insertion batch rapide avec to_sql.
     """
-    df = preprocess_results_df(df)
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute(f'''
-        CREATE TABLE IF NOT EXISTS {table_name} (
-            seq TEXT,
-            Club TEXT, Date TEXT, Epreuve TEXT, Tour TEXT, [Pl.] TEXT, [Perf.] TEXT, [Vt.] TEXT, [Niv.] TEXT, [Pts] TEXT, Ville TEXT, Annee TEXT,
-            UNIQUE(seq, Club, Date, Epreuve, Tour, [Pl.], [Perf.], [Vt.], [Niv.], [Pts], Ville, Annee)
-        )
-    ''')
-    new_rows = 0
-    for _, row in df.iterrows():
-        try:
-            cursor.execute(f'''
-                INSERT OR IGNORE INTO {table_name} (seq, Club, Date, Epreuve, Tour, [Pl.], [Perf.], [Vt.], [Niv.], [Pts], Ville, Annee)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (seq,) + tuple(row.get(col, "") for col in ['Club', 'Date', 'Epreuve', 'Tour', 'Pl.', 'Perf.', 'Vt.', 'Niv.', 'Pts', 'Ville', 'Annee']))
-            if cursor.rowcount == 1:
-                new_rows += 1
-        except Exception as e:
-            print(f"Erreur lors de l'insertion d'une ligne : {e}")
-    conn.commit()
-    conn.close()
-    return new_rows
+    # On ne garde que les colonnes attendues par la table
+    expected_cols = ['seq', 'club', 'date', 'epreuve', 'tour', 'pl', 'perf', 'vt', 'niv', 'pts', 'ville', 'annee']
+    df = df[[col for col in expected_cols if col in df.columns]]
+    # Suppression des doublons
+    df = df.drop_duplicates(subset=expected_cols).reset_index(drop=True)
+
+    # Insertion batch
+    try:
+        df.to_sql(table_name, engine, if_exists='append', index=False, method='multi')
+        return len(df)
+    except Exception as e:
+        print(f"Erreur lors de l'insertion batch : {e}")
+        return 0

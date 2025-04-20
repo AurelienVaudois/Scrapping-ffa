@@ -64,6 +64,3 @@ def convert_time_to_seconds(time_str):
     except Exception:
         return None
     return None
-
-def create_full_date(row):
-    return f"{row['Date']}/{row['Annee']}"
