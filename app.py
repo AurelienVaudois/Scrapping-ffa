@@ -66,6 +66,7 @@ if search_term and len(search_term) >= 3:
             if not df_800.empty:
                 import numpy as np
                 df_800['Lieu'] = np.where(df_800.epreuve == "800m Piste Courte", 'Indoor', 'Outdoor')
+                df_800['date'] = pd.to_datetime(df_800['date'], errors='coerce')
                 df_800['Annee'] = df_800['date'].dt.year
                 df_800 = df_800[~df_800['perf'].str.contains('|'.join(['DNS','DNF', 'AB']), na=False)]
                 df_800['time'] = df_800['perf'].apply(convert_time_to_seconds)
