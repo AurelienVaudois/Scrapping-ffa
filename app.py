@@ -62,38 +62,7 @@ if search_term and len(search_term) >= 3:
 
         if df.empty:
             with st.spinner("Scraping en cours, cela peut prendre quelques secondes..."):
-                import traceback
                 try:
-                    # Affiche l'URL de scraping pour debug
-                    st.info(f"Scraping URL : https://bases.athle.fr/asp.net/athletes.aspx?base=bilans&seq={seq}")
-                    # Récupère la page HTML brute pour debug
-                    import requests
-                    url = f"https://bases.athle.fr/asp.net/athletes.aspx?base=bilans&seq={seq}"
-                    response = requests.get(url)
-                    st.code(response.text[:2000], language="html")
-                    # Teste le parsing des années
-                    from bs4 import BeautifulSoup
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    select = soup.find('select', class_='selectMain')
-                    years = []
-                    if select:
-                        for option in select.find_all('option'):
-                            if 'saison=' in option.get('value', ''):
-                                year = option.get('value').split('saison=')[-1]
-                                if year.isdigit():
-                                    years.append(year)
-                    st.info(f"Années trouvées : {years}")
-                    # Teste le parsing d'une page de résultats si années trouvées
-                    if years:
-                        result_url = f"https://bases.athle.fr/asp.net/athletes.aspx?base=resultats&seq={seq}&saison={years[0]}"
-                        st.info(f"Test parsing résultats : {result_url}")
-                        tables = pd.read_html(result_url, header=0)
-                        st.info(f"Nombre de tables trouvées : {len(tables)}")
-                        if len(tables) > 3:
-                            st.dataframe(tables[3].head())
-                        else:
-                            st.warning("Table de résultats non trouvée.")
-                    # Lance le scraping normal
                     df = get_all_athlete_results(seq)
                     if not df.empty:
                         db_path = "data/athle_results.sqlite"
@@ -101,10 +70,9 @@ if search_term and len(search_term) >= 3:
                         save_results_to_sqlite(df, seq, db_path)
                         st.success("Scraping terminé et données ajoutées à la base.")
                     else:
-                        st.warning("Aucune donnée trouvée pour cet athlète (scraping vide). Regardez le HTML et les tests ci-dessus pour diagnostiquer.")
+                        st.warning("Aucune donnée trouvée pour cet athlète (scraping vide).")
                 except Exception as e:
                     st.error(f"Erreur lors du scraping : {e}")
-                    st.text(traceback.format_exc())
         else:
             st.success("Données chargées depuis la base.")
 
