@@ -64,6 +64,14 @@ if search_term and len(search_term) >= 3:
             with st.spinner("Scraping en cours, cela peut prendre quelques secondes..."):
                 import traceback
                 try:
+                    # Affiche l'URL de scraping pour debug
+                    st.info(f"Scraping URL : https://bases.athle.fr/asp.net/athletes.aspx?base=bilans&seq={seq}")
+                    # Récupère la page HTML brute pour debug
+                    import requests
+                    url = f"https://bases.athle.fr/asp.net/athletes.aspx?base=bilans&seq={seq}"
+                    response = requests.get(url)
+                    st.code(response.text[:2000], language="html")
+                    # Lance le scraping normal
                     df = get_all_athlete_results(seq)
                     if not df.empty:
                         db_path = "data/athle_results.sqlite"
@@ -71,7 +79,7 @@ if search_term and len(search_term) >= 3:
                         save_results_to_sqlite(df, seq, db_path)
                         st.success("Scraping terminé et données ajoutées à la base.")
                     else:
-                        st.warning("Aucune donnée trouvée pour cet athlète (scraping vide).")
+                        st.warning("Aucune donnée trouvée pour cet athlète (scraping vide). Regardez le HTML ci-dessus pour diagnostiquer.")
                 except Exception as e:
                     st.error(f"Erreur lors du scraping : {e}")
                     st.text(traceback.format_exc())
