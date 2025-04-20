@@ -5,6 +5,27 @@ from src.utils.http_utils import search_athletes
 from src.utils.athlete_utils import get_all_athlete_results, save_results_to_sqlite, save_athlete_info
 from src.utils.file_utils import convert_time_to_seconds
 
+import os
+
+os.makedirs("data", exist_ok=True)
+db_path = "data/athle_results.sqlite"
+if not os.path.exists(db_path):
+    # Crée la base et les tables vides si besoin
+    conn = sqlite3.connect(db_path)
+    conn.execute(\"\"\"CREATE TABLE IF NOT EXISTS results (
+        seq TEXT,
+        Club TEXT, Date TEXT, Epreuve TEXT, Tour TEXT, [Pl.] TEXT, [Perf.] TEXT, [Vt.] TEXT, [Niv.] TEXT, [Pts] TEXT, Ville TEXT, Annee TEXT,
+        UNIQUE(seq, Club, Date, Epreuve, Tour, [Pl.], [Perf.], [Vt.], [Niv.], [Pts], Ville, Annee)
+    )\"\"\")
+    conn.execute(\"\"\"CREATE TABLE IF NOT EXISTS athletes (
+        seq TEXT PRIMARY KEY,
+        name TEXT,
+        club TEXT,
+        sex TEXT
+    )\"\"\")
+    conn.commit()
+    conn.close()
+
 st.set_page_config(page_title="Athlé Analyse", layout="wide")
 st.title("Analyse des performances athlétisme")
 st.markdown("""
