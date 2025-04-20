@@ -6,3 +6,4 @@ logs/
 *.pyc
 .env
 .DS_Store
+athle_results.sqlite
