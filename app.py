@@ -90,7 +90,8 @@ if selected:
     # Bloc 3 : Sélection d'épreuve et affichage (ne recharge pas les données)
     EPREUVES = {
         '800m': ['800m', '800m Piste Courte'],
-        '1500m': ['1 500m', '1 500m Piste Courte']
+        '1500m': ['1 500m', '1 500m Piste Courte'],
+        '3000m Steeple (91)': ['3000m Steeple (91)'],
     }
     epreuve_choisie = st.selectbox("Choisissez l'épreuve à afficher :", list(EPREUVES.keys()), index=0, key="epreuve_select")
     filtres_epreuve = EPREUVES[epreuve_choisie]
@@ -102,7 +103,7 @@ if selected:
             df_epreuve['Lieu'] = np.where(df_epreuve.epreuve.str.contains('Piste Courte'), 'Indoor', 'Outdoor')
             df_epreuve['date'] = pd.to_datetime(df_epreuve['date'], errors='coerce')
             df_epreuve['Annee'] = df_epreuve['date'].dt.year
-            df_epreuve = df_epreuve[~df_epreuve['perf'].str.contains('|'.join(['DNS','DNF', 'AB']), na=False)]
+            df_epreuve = df_epreuve[~df_epreuve['perf'].str.contains('|'.join(['DNS','DNF', 'AB', 'DQ']), na=False)]
             df_epreuve['time'] = df_epreuve['perf'].apply(convert_time_to_seconds)
             df_epreuve = df_epreuve.dropna(subset=['date', 'time'])
             df_epreuve = df_epreuve.sort_values('date')
