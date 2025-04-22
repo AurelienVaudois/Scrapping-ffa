@@ -21,22 +21,39 @@ Entrez le nom d'un athlète pour visualiser l'évolution de ses performances sur
 Si l'athlète n'est pas encore dans la base, le scraping sera lancé automatiquement.
 """)
 
-search_term = st.text_input("Nom de l'athlète à rechercher")
+# --- Gestion de l'état avec st.session_state pour éviter la relance de la recherche d'athlètes ---
 
-# Bloc 1 : Recherche athlètes et sélection
-athletes = []
-selected = None
-if search_term and len(search_term) >= 3:
+if 'athletes' not in st.session_state:
+    st.session_state['athletes'] = []
+if 'athlete_options' not in st.session_state:
+    st.session_state['athlete_options'] = []
+if 'selected_athlete' not in st.session_state:
+    st.session_state['selected_athlete'] = None
+
+search_term = st.text_input("Nom de l'athlète à rechercher", key="search_term")
+
+# Recherche uniquement sur clic bouton ou changement de search_term
+if (search_term and len(search_term) >= 3 and st.session_state.get('last_search_term') != search_term):
     with st.spinner("Recherche des athlètes..."):
         athletes = search_athletes(search_term)
-    if athletes:
-        options = [f"{a['name']} ({a['club']})" for a in athletes]
-        choice = st.selectbox("Sélectionnez l'athlète :", options, key="athlete_select")
-        selected = athletes[options.index(choice)]
-    else:
-        st.warning("Aucun athlète trouvé pour cette recherche.")
+        st.session_state['athletes'] = athletes
+        st.session_state['athlete_options'] = [f"{a['name']} ({a['club']})" for a in athletes]
+        st.session_state['selected_athlete'] = None
+        st.session_state['last_search_term'] = search_term
+
+athletes = st.session_state['athletes']
+athlete_options = st.session_state['athlete_options']
+selected_athlete = st.session_state['selected_athlete']
+
+if athlete_options:
+    idx = 0
+    if selected_athlete and selected_athlete in athletes:
+        idx = athletes.index(selected_athlete)
+    choice = st.selectbox("Sélectionnez l'athlète :", athlete_options, index=idx, key="athlete_select")
+    selected = athletes[athlete_options.index(choice)]
+    st.session_state['selected_athlete'] = selected
 else:
-    st.info("Veuillez entrer au moins 3 caractères pour lancer la recherche.")
+    selected = None
 
 # Bloc 2 : Chargement des résultats de l'athlète sélectionné (une seule fois)
 if selected:
@@ -61,6 +78,7 @@ if selected:
                     df = clean_and_prepare_results_df(df, seq)
                     save_athlete_info(seq, name, club, sex, engine)
                     save_results_to_postgres(df, seq, engine)
+                    st.cache_data.clear()
                     st.success("Scraping terminé et données ajoutées à la base.")
                 else:
                     st.warning("Aucune donnée trouvée pour cet athlète (scraping vide).")
