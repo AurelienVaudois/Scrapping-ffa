@@ -3,7 +3,7 @@ import pandas as pd
 from json.decoder import JSONDecodeError
 import concurrent.futures
 import time
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm        # ↩ détecte console, Jupyter ou Streamlit
 
 def get_athlete_results_by_name(athlete_name, start_year=1960, end_year=2025, use_threading=True, max_workers=10):
     """
