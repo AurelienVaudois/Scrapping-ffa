@@ -19,4 +19,4 @@ requests-cache    # cache disque 24 h
 selectolax        # parser HTML très rapide
 asyncpg           # COPY vers Postgres en mode asyncio
 # fastinference     # petit util partagé pour la méthode .clean()
-
+tqdm
