@@ -1,6 +1,8 @@
 # Fonctions utilitaires pour fichiers (CSV, JSON)
 import csv
 import json
+import re
+from typing import Optional
 
 def save_to_csv(data, filename):
     with open(filename, 'w', newline='', encoding='utf-8') as f:
@@ -28,39 +30,66 @@ def str_to_hex(id_str: str) -> str:
         hexreturn += str(char_code)
     return hexreturn
 
+# ---------------------------------------------------------------------------
+# Conversion performances ----------------------------------------------------
+# ---------------------------------------------------------------------------
+_INVALID = {"DQ", "AB", "DNS", "DNF", "NP", "RET", "NC", "NCL", "NQ", "EL", "DSQ", "X"}
+
+_TIME_RE = re.compile(r"^(?P<min>\d+)'(?P<sec>\d{1,2})(?:'+(?P<cent>\d{1,2}))?$")
+_ROUTE_RE = re.compile(r"^(?P<min>\d+):(?P<sec>\d{1,2})(?:\.(?P<cent>\d{1,2}))?$")
+
+
+def _to_seconds(min_: str, sec: str, cent: Optional[str]) -> float:
+    base = int(min_) * 60 + int(sec)
+    if cent is not None and cent != "":
+        base += int(cent) / 100
+    return base
+
+
 def convert_time_to_seconds(time_str):
-    """
-    Convertit une performance au format athlé (ex: 1'54''38) en secondes.
-    Ignore les valeurs non numériques (DQ, AB, DNS, DNF, etc.).
+    """Convertit un temps athlé en secondes (`float`).
+
+    Gère les cas suivants :
+    • "14'09''95"  piste (centièmes)
+    • "14'31''"    piste (sans centièmes)
+    • "13'12'' (13'05'')"  – on garde la valeur entre parenthèses
+    • "13:13.66"    route WA (centièmes)
+    • "13:28"       route WA (secondes uniquement)
+    Si la chaîne contient l’un des mots `_INVALID`, renvoie None.
     """
     if not isinstance(time_str, str):
         return None
-    # Liste des valeurs à ignorer
-    invalids = ['DQ', 'AB', 'DNS', 'DNF', 'NP', 'RET', 'NC', 'NCL', 'NQ', 'EL', 'DSQ', 'X']
-    if any(invalid in time_str for invalid in invalids):
+
+    # valeurs invalides
+    if any(bad in time_str for bad in _INVALID):
         return None
-    import re
+
     time_str = time_str.strip()
-    # Nettoyage : garde la valeur entre parenthèses si présente
-    m = re.search(r"\(([^)]+)\)", time_str)
-    if m:
-        time_str = m.group(1)
-    time_str = time_str.replace("''", "'")
-    parts = re.split(r"'|\"", time_str)
+
+    # Prendre la valeur entre parenthèses si présente
+    m_par = re.search(r"\(([^)]+)\)", time_str)
+    if m_par:
+        time_str = m_par.group(1).strip()
+
+    time_str = time_str.replace("''", "'")  # normalise 2×'
+    
+    # si la chaîne se termine par un simple ', on le retire
+    if time_str.endswith("'"):
+        time_str = time_str[:-1]
+
+    # Format piste  m'ss'cc  ou  m'ss'
+    m_track = _TIME_RE.match(time_str)
+    if m_track:
+        return _to_seconds(m_track["min"], m_track["sec"], m_track["cent"])
+
+    # Format route m:ss.cc  ou m:ss
+    m_route = _ROUTE_RE.match(time_str)
+    if m_route:
+        cent = m_route["cent"] or "00"
+        return _to_seconds(m_route["min"], m_route["sec"], cent)
+
+    # Dernier recours : nombre brut
     try:
-        if len(parts) == 3:  # ex: 1'54'38
-            min_, sec, cent = parts
-            return int(min_) * 60 + int(sec) + int(cent) / 100
-        elif len(parts) == 2:  # ex: 15'32
-            min_, sec = parts
-            return int(min_) * 60 + int(sec)
-        elif len(parts) == 1 and ':' in parts[0]:  # ex: 1:54.38
-            t = parts[0].split(':')
-            if len(t) == 2:
-                min_, sec = t
-                return int(min_) * 60 + float(sec)
-        elif len(parts) == 1:
-            return float(parts[0])
-    except Exception:
+        return float(time_str)
+    except ValueError:
         return None
-    return None

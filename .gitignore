@@ -7,3 +7,8 @@ logs/
 .env
 .DS_Store
 athle_results.sqlite
+
+# cache httpx / requests-cache
+ffa_http_cache.sqlite
+ffa_http_cache.sqlite-journal
+

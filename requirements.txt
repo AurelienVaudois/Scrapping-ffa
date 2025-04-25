@@ -10,3 +10,13 @@ lxml
 psycopg2-binary
 sqlalchemy
 python-dotenv
+
+# --- nouvelles dépendances pour le scraper asynchrone --------------------
+# http/2 support + cache + parsing HTML ultra‑rapide
+httpx[http2]       # client async avec multiplexing HTTP/2
+
+requests-cache    # cache disque 24 h
+selectolax        # parser HTML très rapide
+asyncpg           # COPY vers Postgres en mode asyncio
+# fastinference     # petit util partagé pour la méthode .clean()
+
