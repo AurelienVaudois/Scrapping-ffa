@@ -60,21 +60,29 @@ def search_wa_athletes(search_term: str) -> List[Dict[str, Any]]:
 _DISCIPLINE_MAP_CI = {
     "800 metres": "800m",
     "800 metres short track": "800m Piste Courte",
-    "800m": "800m",
     "1500 metres": "1 500m",
     "1500 metres short track": "1 500m Piste Courte",
-    "1500m": "1 500m",
     "3000 metres steeplechase": "3000m Steeple (91)",
-    "3000m steeplechase": "3000m Steeple (91)",
+
+    "3000 metres": "3 000m",
+    "3000 metres short track": "3 000m Piste Courte",
+    
+    "5000 metres": "5 000m",
+    "5000 metres short track": "5 000m Piste Courte",
+    "5 kilometres road": "5 Km Route",
+    
+    "10,000 metres": "10 000m",           
+    "10 kilometres road": "10 Km Route",  
+    
+    "half marathon": "1/2 Marathon",
+    
+    
 }
 
 
 def _map_discipline(raw_name: str, indoor: bool) -> str:
     key = str(raw_name).strip().lower()
     base = _DISCIPLINE_MAP_CI.get(key, raw_name)
-    # Ajout automatique de « Piste Courte » si indoor=True pour 800/1500
-    if indoor and base in {"800m", "1 500m"}:
-        return f"{base} Piste Courte"
     return base
 
 ###############################################################################
@@ -115,8 +123,6 @@ def _prepare_results_df(raw: pd.DataFrame, seq: str) -> pd.DataFrame:
     # Discipline : si colonne absente / NaN → on tente disciplineCode
     def _disc(row):
         d = row.get("discipline")
-        if pd.isna(d) or not d:
-            d = row.get("disciplineCode") or row.get("disciplineNameUrlSlug")
         return _map_discipline(d, bool(row.get("indoor")))
 
     df["epreuve"] = df.apply(_disc, axis=1)

@@ -32,16 +32,26 @@ engine = create_engine(db_url)
 st.set_page_config(page_title="Athlé Analyse", layout="wide")
 st.title("Analyse des performances athlétisme")
 st.markdown(
-    """Entrez le nom d'un athlète pour visualiser l'évolution de ses performances sur 
-* 800m, 
-* 1500m, 
-* 3 000 m Steeple
-* 5 000m & 5km route (graphique commun)
-* 10000m & 10km route (graphique commun).
+    """
+    ### 📈 Suivi des performances athlétiques
 
-Si l'athlète n'est pas encore dans la base, le scraping sera lancé automatiquement.
-"""
+    Entrez le **nom d'un athlète** pour visualiser l'évolution de ses performances sur :
+
+    - **800m**
+    - **1500m**
+    - **3000m**
+    - **3000m Steeple**
+    - **5000m** & **5km Route** *(graphique combiné)*
+    - **10000m** & **10km Route** *(graphique combiné)*
+    - **Semi-Marathon (21,097 km)**
+    - **Marathon (42,195 km)**
+
+    ---
+    🔎 *Si l'athlète n'est pas encore dans la base, le scraping sera lancé automatiquement.*
+    """,
+    unsafe_allow_html=True
 )
+
 
 # --- State init ----------------------------------------------------------------
 if "athletes" not in st.session_state:
@@ -150,20 +160,21 @@ if selected:
     EPREUVES = {
         "800m": ["800m", "800m Piste Courte"],
         "1500m": ["1 500m", "1 500m Piste Courte"],
+        
+        "3000m": ["3 000m", "3 000m Piste Courte"],
+        
         "3000m Steeple (91)": ["3000m Steeple (91)"],
-        # 🔽  ➜  nouveaux couples piste / route
-    "5000 / 5K": [
-        "5 000m",              # FFA piste
-        "5000 Metres",         # WA piste
-        "5 Km Route",          # FFA route
-        "5 Kilometres Road",   # WA route
-    ],
-    "10000 / 10K": [
-        "10 000m",             # FFA piste
-        "10000 Metres",        # WA piste
-        "10 Km Route",         # FFA route
-        "10 Kilometres Road",  # WA route
-    ],
+        
+        "5000 / 5K": ["5 000m", "5 000m Piste Courte", "5 Km Route"],
+        
+        "10000 / 10K": ["10 000m", "10 Km Route"],
+        
+        "1/2 Marathon": ["1/2 Marathon"],
+        
+        "Marathon": ["Marathon"],
+        
+        
+
     }
     epreuve_choisie = st.selectbox(
         "Choisissez l'épreuve à afficher :", list(EPREUVES.keys()), index=0, key="epreuve_select"
@@ -177,6 +188,8 @@ if selected:
             import seaborn as sns
             import matplotlib.pyplot as plt
             import matplotlib
+            
+            is_long_distance = any(x in epreuve_choisie.lower() for x in ["1/2 marathon", "marathon"])
 
             df_epreuve["Lieu"] = np.where(
                 df_epreuve.epreuve.str.contains("Piste Courte"), "Indoor", "Outdoor"
@@ -213,12 +226,19 @@ if selected:
                 "#4CBB17",
                 "#FF6B6B",
             ]
-
+            
             def format_time(x):
-                minutes = int(x) // 60
-                seconds = int(x) % 60
-                centiseconds = int((x * 100) % 100)
-                return f"{minutes}'{seconds:02d}''{centiseconds:02d}"
+                if is_long_distance:
+                    h = int(x) // 3600
+                    m = (int(x) % 3600) // 60
+                    s = int(x) % 60
+                    return f"{h}:{m:02d}:{s:02d}"
+                else:
+                    minutes = int(x) // 60
+                    seconds = int(x) % 60
+                    centiseconds = int((x * 100) % 100)
+                    return f"{minutes}'{seconds:02d}''{centiseconds:02d}"
+
 
             fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
             scatter_plot = sns.scatterplot(
