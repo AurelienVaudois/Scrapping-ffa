@@ -1,14 +1,21 @@
 # .gitignore
 venv/
-__pycache__/
-data/
-logs/
-*.pyc
-.env
-.DS_Store
-athle_results.sqlite
 
-# cache httpx / requests-cache
-ffa_http_cache.sqlite
-ffa_http_cache.sqlite-journal
+# Environment variables
+.env
+*.env
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SQLite database files
+*.sqlite
+
+# Log files
+logs/
+*.log
+
+.DS_Store
 

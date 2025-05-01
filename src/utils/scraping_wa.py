@@ -3,7 +3,16 @@ import pandas as pd
 from json.decoder import JSONDecodeError
 import concurrent.futures
 import time
-from tqdm.auto import tqdm        # ↩ détecte console, Jupyter ou Streamlit
+from tqdm.auto import tqdm
+import os
+from dotenv import load_dotenv
+
+# Charger les variables d'environnement
+load_dotenv()
+
+# Configuration World Athletics API
+WA_API_URL = os.getenv('WA_API_URL')
+WA_API_KEY = os.getenv('WA_API_KEY')
 
 def get_athlete_results_by_name(athlete_name, start_year=1960, end_year=2025, use_threading=True, max_workers=10):
     """
@@ -73,9 +82,7 @@ def search_athletes_by_name(athlete_name):
         pd.DataFrame: DataFrame contenant les informations de l'athlète
         ou un message d'erreur si la recherche échoue
     """
-    # Define the base URL and the API key
-    url = "https://graphql-prod-4770.prod.aws.worldathletics.org/graphql"
-    headers = {"x-api-key": "da2-va3eohaexrc63o763kzmy3fkg4"}
+    headers = {"x-api-key": WA_API_KEY}
     payload = {
         "operationName": "SearchCompetitors",
         "variables": {
@@ -100,7 +107,7 @@ def search_athletes_by_name(athlete_name):
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(WA_API_URL, json=payload, headers=headers)
         response.raise_for_status()
         
         json_data = response.json()
@@ -132,12 +139,11 @@ def fetch_year_data(athlete_id, year):
     Returns:
         tuple: (année, données de l'année, années actives)
     """
-    url = "https://graphql-prod-4770.prod.aws.worldathletics.org/graphql"
     headers = {
         "accept": "*/*",
         "content-type": "application/json",
         "x-amz-user-agent": "aws-amplify/3.0.2",
-        "x-api-key": "da2-va3eohaexrc63o763kzmy3fkg4"
+        "x-api-key": WA_API_KEY
     }
     
     payload = {
@@ -183,7 +189,7 @@ def fetch_year_data(athlete_id, year):
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers)
+        response = requests.post(WA_API_URL, json=payload, headers=headers)
         response.raise_for_status()
         
         data = response.json()

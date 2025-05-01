@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
+import os
 from src.utils.http_utils import search_athletes            # FFA autocomplete
 from src.utils.wa_utils import (
     search_wa_athletes,                                     # WA autocomplete (fallback)
@@ -12,7 +13,6 @@ from src.utils.athlete_utils import (
     clean_and_prepare_results_df,
 )
 from src.utils.file_utils import convert_time_to_seconds
-import os
 from src.utils.ffa_fast import get_all_results_fast as get_all_athlete_results
 
 # -----------------------------------------------------------------------------
@@ -20,13 +20,14 @@ from src.utils.ffa_fast import get_all_results_fast as get_all_athlete_results
 # -----------------------------------------------------------------------------
 try:
     db_url = st.secrets["DB_URL"]
+    WA_API_URL = st.secrets["WA_API_URL"]
+    WA_API_KEY = st.secrets["WA_API_KEY"]
 except Exception:
     from dotenv import load_dotenv
     load_dotenv()
     db_url = os.getenv("DB_URL")
 engine = create_engine(db_url)
-
-# -----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------- 
 # UI settings -----------------------------------------------------------------
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Athlé Analyse", layout="wide")
@@ -73,6 +74,7 @@ if search_term and len(search_term) >= 3 and st.session_state.get("last_search_t
         # ② Fallback World Athletics si FFA vide
         if not athletes:
             athletes = search_wa_athletes(search_term)
+            print(f"Fallback WA: {athletes}")
         st.session_state["athletes"] = athletes
         st.session_state["athlete_options"] = [
             f"{a['name']} ({a.get('club','')})" for a in athletes

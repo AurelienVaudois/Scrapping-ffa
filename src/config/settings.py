@@ -1,1 +1,0 @@
-# Ce fichier peut contenir la configuration globale du projet.
