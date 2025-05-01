@@ -74,8 +74,8 @@ def search_athletes_by_name(athlete_name):
         ou un message d'erreur si la recherche échoue
     """
     # Define the base URL and the API key
-    url = "https://graphql-prod-4765.prod.aws.worldathletics.org/graphql"
-    headers = {"x-api-key": "da2-ois4zbc7s5htnlsy2it7bfkr2q"}
+    url = "https://graphql-prod-4770.prod.aws.worldathletics.org/graphql"
+    headers = {"x-api-key": "da2-va3eohaexrc63o763kzmy3fkg4"}
     payload = {
         "operationName": "SearchCompetitors",
         "variables": {
@@ -132,12 +132,12 @@ def fetch_year_data(athlete_id, year):
     Returns:
         tuple: (année, données de l'année, années actives)
     """
-    url = "https://graphql-prod-4765.prod.aws.worldathletics.org/graphql"
+    url = "https://graphql-prod-4770.prod.aws.worldathletics.org/graphql"
     headers = {
         "accept": "*/*",
         "content-type": "application/json",
         "x-amz-user-agent": "aws-amplify/3.0.2",
-        "x-api-key": "da2-ois4zbc7s5htnlsy2it7bfkr2q"
+        "x-api-key": "da2-va3eohaexrc63o763kzmy3fkg4"
     }
     
     payload = {
