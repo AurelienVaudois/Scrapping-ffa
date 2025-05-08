@@ -38,18 +38,11 @@ st.markdown(
 
     Entrez le **nom d'un athlète** pour visualiser l'évolution de ses performances sur :
 
-    - **100m**
-    - **200m**
-    - **400m**
-    - **800m**
-    - **1500m**
-    - **3000m**
-    - **3000m Steeple**
-    - **5000m** & **5km Route** *(graphique combiné)*
-    - **10000m** & **10km Route** *(graphique combiné)*
-    - **Semi-Marathon (21,097 km)**
-    - **Marathon (42,195 km)**
-
+    - **SPRINT** : **100m**, **200m**, **400m**
+    - **MIDDLE DISTANCE** : **800m**, **1500m**, **3000m**, **3000m Steeple**
+    - **LONG DISTANCE** : **5000m**, **10000m**, **Semi-Marathon**, **Marathon**
+    - **ROUTE** : **5km**, **10km** 
+  
     ---
     🔎 *Si l'athlète n'est pas encore dans la base, le scraping sera lancé automatiquement.*
     """,
