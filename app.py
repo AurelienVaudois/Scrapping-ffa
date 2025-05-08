@@ -38,6 +38,9 @@ st.markdown(
 
     Entrez le **nom d'un athlète** pour visualiser l'évolution de ses performances sur :
 
+    - **100m**
+    - **200m**
+    - **400m**
     - **800m**
     - **1500m**
     - **3000m**
@@ -160,6 +163,10 @@ if selected:
     # 3. Affichage (identique à ton code d’origine) ----------------------------
     # -------------------------------------------------------------------------
     EPREUVES = {
+        
+        "100m": ["100m"],
+        "200m": ["200m", "200m Piste Courte"],
+        "400m": ["400m", "400m Piste Courte"],
         "800m": ["800m", "800m Piste Courte"],
         "1500m": ["1 500m", "1 500m Piste Courte"],
         
@@ -192,6 +199,7 @@ if selected:
             import matplotlib
             
             is_long_distance = any(x in epreuve_choisie.lower() for x in ["1/2 marathon", "marathon"])
+            is_sprint = any(x in epreuve_choisie.lower() for x in ["100m", "200m", "400m"])
 
             df_epreuve["Lieu"] = np.where(
                 df_epreuve.epreuve.str.contains("Piste Courte"), "Indoor", "Outdoor"
@@ -235,6 +243,10 @@ if selected:
                     m = (int(x) % 3600) // 60
                     s = int(x) % 60
                     return f"{h}:{m:02d}:{s:02d}"
+                if is_sprint:
+                    seconds = int(x) % 60
+                    centiseconds = int((x * 100) % 100)                   
+                    return f"{seconds:02d}''{centiseconds:02d}"
                 else:
                     minutes = int(x) // 60
                     seconds = int(x) % 60

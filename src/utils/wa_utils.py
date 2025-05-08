@@ -58,6 +58,13 @@ def search_wa_athletes(search_term: str) -> List[Dict[str, Any]]:
 ###############################################################################
 # Dictionnaire case‑insensitive (clé stockée en minuscule) -------------------
 _DISCIPLINE_MAP_CI = {
+    
+    "100 metres": "100m",
+    '200 metres': '200m', 
+    '200 metres short track': '200m Piste Courte',
+    '400 metres': '400m', 
+    '400 metres short track': '400m Piste Courte',
+    
     "800 metres": "800m",
     "800 metres short track": "800m Piste Courte",
     "1500 metres": "1 500m",
