@@ -15,7 +15,7 @@ Notes
 """
 from __future__ import annotations
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import pandas as pd
 from sqlalchemy.engine import Engine
 
@@ -23,6 +23,7 @@ from src.utils.scraping_wa import (
     search_athletes_by_name as _wa_search,
     get_athlete_results_by_name as _wa_results,
 )
+
 
 ###############################################################################
 # 1. Recherche d’athlètes (fallback) ##########################################
@@ -180,3 +181,33 @@ def fetch_and_store_wa_results(name: str, engine: Engine):
     save_results_to_postgres(final_df, seq, engine)
 
     return final_df
+
+# ─── helper lecture-seule : DataFrame WA sans écriture DB ──────────────────
+def fetch_wa_results_df(name: str) -> pd.DataFrame:
+    """
+    Scrape World Athletics → renvoie un DataFrame normalisé *sans* rien écrire
+    dans la base.  Aucune ligne dupliquée n’est présente.
+
+    Parameters
+    ----------
+    name : str
+        Nom (ou slug) de l’athlète tel qu’affiché sur worldathletics.org.
+
+    Returns
+    -------
+    pd.DataFrame
+        Colonnes conformes au schéma `results` :
+        seq, club, date, epreuve, tour, pl, perf, vt, niv, pts, ville, annee
+        (DataFrame vide si rien trouvé ou si WA renvoie un message d’info/erreur).
+    """
+    # 1. Scraping brut via le helper existant : _wa_results(name, …)
+    raw_df = _wa_results(name, use_threading=True)
+    if raw_df.empty or "info" in raw_df.columns:
+        return pd.DataFrame()
+
+    # 2. Construction de l’identifiant unique « WA_<athlete_id> »
+    aa_id = int(raw_df["athlete_id"].iloc[0])
+    seq   = f"WA_{aa_id}"
+
+    # 3. Nettoyage / mapping vers le schéma Postgres déjà défini
+    return _prepare_results_df(raw_df, seq)

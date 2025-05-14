@@ -7,6 +7,10 @@ import pandas as pd
 from dotenv import load_dotenv
 from typing import List, Optional
 
+from psycopg2.extras import execute_values
+from sqlalchemy.engine import Engine
+from contextlib import closing          # 👈 Ajout
+
 load_dotenv()
 db_url = os.getenv("DB_URL")
 engine = create_engine(db_url)
@@ -127,21 +131,68 @@ def clean_and_prepare_results_df(df, seq):
     return df
 
 
-def save_results_to_postgres(df: pd.DataFrame, seq: str, engine, table_name: str = 'results') -> int:
-    """
-    Insère les résultats dans une base PostgreSQL en évitant les doublons et en ajoutant la colonne seq.
-    Utilise une insertion batch rapide avec to_sql.
-    """
-    # On ne garde que les colonnes attendues par la table
-    expected_cols = ['seq', 'club', 'date', 'epreuve', 'tour', 'pl', 'perf', 'vt', 'niv', 'pts', 'ville', 'annee']
-    df = df[[col for col in expected_cols if col in df.columns]]
-    # Suppression des doublons
-    df = df.drop_duplicates(subset=expected_cols).reset_index(drop=True)
+# def save_results_to_postgres(df: pd.DataFrame, seq: str, engine, table_name: str = 'results') -> int:
+#     """
+#     Insère les résultats dans une base PostgreSQL en évitant les doublons et en ajoutant la colonne seq.
+#     Utilise une insertion batch rapide avec to_sql.
+#     """
+#     # On ne garde que les colonnes attendues par la table
+#     expected_cols = ['seq', 'club', 'date', 'epreuve', 'tour', 'pl', 'perf', 'vt', 'niv', 'pts', 'ville', 'annee']
+#     df = df[[col for col in expected_cols if col in df.columns]]
+#     # Suppression des doublons
+#     df = df.drop_duplicates(subset=expected_cols).reset_index(drop=True)
 
-    # Insertion batch
-    try:
-        df.to_sql(table_name, engine, if_exists='append', index=False, method='multi')
-        return len(df)
-    except Exception as e:
-        print(f"Erreur lors de l'insertion batch : {e}")
+#     # Insertion batch
+#     try:
+#         df.to_sql(table_name, engine, if_exists='append', index=False, method='multi')
+#         return len(df)
+#     except Exception as e:
+#         print(f"Erreur lors de l'insertion batch : {e}")
+#         return 0
+
+def save_results_to_postgres(
+    df: pd.DataFrame,
+    seq: str,
+    engine: Engine,
+    table: str = "results",
+    batch_size: int = 1000,
+) -> int:
+    """
+    Insère les résultats d'un athlète dans Postgres sans créer de doublons.
+
+    Paramètres
+    ----------
+    df : DataFrame déjà nettoyé et conforme au schéma `results`
+    seq : identifiant de l'athlète
+    engine : SQLAlchemy Engine vers la base Postgres
+    table : nom de la table cible (défaut « results »)
+    batch_size : taille des paquets pour execute_values
+
+    Retour
+    ------
+    int : nombre de nouvelles lignes réellement insérées
+    """
+    if df.empty:
         return 0
+
+    # ------------------------------------------------------------------ build
+    columns = list(df.columns)
+    values  = [tuple(row) for row in df.to_numpy()]
+
+    placeholders = ",".join(columns)
+    insert_sql = f"""
+        INSERT INTO {table} ({placeholders})
+        VALUES %s
+        ON CONFLICT (seq, date, epreuve, tour, perf) DO NOTHING
+        RETURNING 1
+    """
+
+    # ─── NEW ─── remplacement du bloc connexion/curseur ──────────────────
+    raw_conn = engine.raw_connection()          # ← plus de « with »
+    try:
+        with closing(raw_conn.cursor()) as cur:
+            execute_values(cur, insert_sql, values, page_size=batch_size)
+        raw_conn.commit()
+    finally:
+        raw_conn.close()
+    return len(values)
