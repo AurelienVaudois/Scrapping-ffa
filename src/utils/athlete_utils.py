@@ -121,6 +121,8 @@ def clean_and_prepare_results_df(df, seq):
     if 'date' in df.columns and 'annee' in df.columns:
         df['date_full'] = df['date'].astype(str).str.zfill(5) + '/' + df['annee'].astype(str)
         df['date'] = pd.to_datetime(df['date_full'], format='%d/%m/%Y', errors='coerce')
+        df = df[df['date'].notna()].copy()       # on ne garde que les dates valides
+        df['date'] = df['date'].astype(object)   # pour autoriser les None  
         df = df.drop(columns=['date_full'])
     # Nettoyage des types et valeurs manquantes
     for col in ['club', 'epreuve', 'tour', 'pl', 'perf', 'vt', 'niv', 'pts', 'ville']:

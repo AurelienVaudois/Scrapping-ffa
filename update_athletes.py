@@ -39,8 +39,8 @@ from src.utils.wa_utils import fetch_wa_results_df   # ← nouveau helper
 load_dotenv()
 DB_URL        = os.getenv("DB_URL")
 DEFAULT_BATCH = int(os.getenv("BATCH_SIZE", 10))
-MAX_AGE_DAYS  = int(os.getenv("MAX_AGE_DAYS", 7))
-DEFAULT_DELAY = int(os.getenv("DELAY_SECONDS", 600))  # 10 min
+MAX_AGE_DAYS  = int(os.getenv("MAX_AGE_DAYS", 1))
+DEFAULT_DELAY = int(os.getenv("DELAY_SECONDS", 60))  # 10 min
 
 if not DB_URL:
     raise SystemExit("❌  DB_URL manquant dans l’environnement")
