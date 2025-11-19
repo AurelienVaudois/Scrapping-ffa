@@ -24,21 +24,30 @@ def get_athlete_years(seq: str) -> List[str]:
     Returns:
         List[str]: Liste des années (str).
     """
-    url = f"https://bases.athle.fr/asp.net/athletes.aspx?base=bilans&seq={seq}"
+    url = f"https://www.athle.fr/athletes/{seq}/resultats"
     response = requests.get(url)
     response.raise_for_status()
-    soup = BeautifulSoup(response.text, 'html.parser')
-    select = soup.find('select', class_='selectMain')
-    years = []
-    if select:
-        for option in select.find_all('option'):
-            if 'saison=' in option.get('value', ''):
-                # Extrait l'année de l'URL
-                year = option.get('value').split('saison=')[-1]
-                if year.isdigit():
-                    years.append(year)
-    return years
+    
+    soup = BeautifulSoup(response.text, "html.parser")
+    # Trouver le titre "Résultats par année"
+    header = soup.find(lambda t: t.name in ("h2", "h3") and "Résultats par année" in t.get_text())
 
+    years = []
+    if header:
+        # On lit les éléments suivants jusqu'à la prochaine section
+        for sib in header.find_next_siblings():
+            # Si on tombe sur un autre titre, on arrête
+            if sib.name in ("h2", "h3"):
+                break
+            for txt in sib.stripped_strings:
+                if txt.isdigit() and len(txt) == 4:
+                    y = int(txt)
+                    if 2000 <= y <= datetime.now().year:
+                        s = str(y)
+                        if s not in years:
+                            years.append(s)
+                            
+    return years
 
 def get_athlete_results(seq: str, year: str) -> Optional[pd.DataFrame]:
     """
@@ -49,18 +58,54 @@ def get_athlete_results(seq: str, year: str) -> Optional[pd.DataFrame]:
     Returns:
         Optional[pd.DataFrame]: DataFrame des résultats ou None si erreur.
     """
-    url = f"https://bases.athle.fr/asp.net/athletes.aspx?base=resultats&seq={seq}&saison={year}"
+    
+    url = f"https://www.athle.fr/ajax/fiche-athlete-resultats.aspx?seq={seq}&annee={year}"
+    r = requests.get(url)
+    r.raise_for_status()
     try:
-        tables = pd.read_html(url, header=0)
-        # La table des résultats est généralement la 4ème (index 3)
-        if len(tables) > 3:
-            df = tables[3]
-            df['Annee'] = year
-            return df
+        soup = BeautifulSoup(r.text, "html.parser")
+        # Supprimer les sous-tableaux "detail-inner-table"
+        for t in soup.select(".detail-inner-table"):
+            t.decompose()
+
+        thead = soup.select_one("thead")
+        tbody = soup.select_one("tbody")
+        if not thead or not tbody:
+            raise ValueError("thead ou tbody introuvable")
+
+        headers = [th.get_text(strip=True) for th in thead.select("tr > th")]
+        if headers and not headers[-1]:
+            headers = headers[:-1]
+
+        rows = []
+        # On parcourt uniquement les enfants directs de tbody
+        for tr in tbody.find_all("tr", recursive=False):
+            classes = tr.get("class", [])
+            if any(c.startswith("detail-row") for c in classes):
+                continue
+
+            # <td> de premier niveau uniquement
+            tds = tr.find_all("td", recursive=False)
+            if tds and "desktop-tablet-d-none" in tds[-1].get("class", []):
+                tds = tds[:-1]
+
+            cells = []
+            for i, td in enumerate(tds):
+                if i == len(headers) - 1:
+                    a = td.find("a")
+                    cells.append(a.get_text(strip=True) if a else td.get_text(" ", strip=True))
+                else:
+                    cells.append(td.get_text(" ", strip=True))
+
+            cells = cells[:len(headers)]
+            rows.append(cells)
+
+        df = pd.DataFrame(rows, columns=headers)
+        df['Annee'] = year
+        return df
     except Exception as e:
         print(f"Erreur lors de la récupération des résultats pour {year}: {e}")
     return None
-
 
 def get_all_athlete_results(seq: str) -> pd.DataFrame:
     """
@@ -112,18 +157,35 @@ def clean_and_prepare_results_df(df, seq):
     - gestion des NaN/NaT
     """
     col_map = {
-        'Club': 'club', 'Date': 'date', 'Epreuve': 'epreuve', 'Tour': 'tour', 'Pl.': 'pl',
-        'Perf.': 'perf', 'Vt.': 'vt', 'Niv.': 'niv', 'Pts': 'pts', 'Ville': 'ville', 'Annee': 'annee', 'seq': 'seq'
+        'Club': 'club', 'Date': 'date', 'Epreuve': 'epreuve', 'Tour': 'tour', 'Place': 'pl',
+        'Performance': 'perf', 'Vent': 'vt', 'Niveau': 'niv', 'Points': 'pts', 'Lieu': 'ville', 'Annee': 'annee', 'seq': 'seq'
     }
+    
+    mois_map = {
+    "Janv": "Jan",
+    "Fév": "Feb", "Fev": "Feb",
+    "Mars": "Mar",
+    "Avr": "Apr",
+    "Mai": "May",
+    "Juin": "Jun",
+    "Juil": "Jul",
+    "Août": "Aug", "Aout": "Aug",
+    "Sept": "Sep",
+    "Oct": "Oct",
+    "Nov": "Nov",
+    "Déc": "Dec", "Dec": "Dec"
+}
+    
     df = df.rename(columns=col_map)
-    df['seq'] = seq
+    # df['seq'] = seq
     # Reconstitue la date complète avant conversion
     if 'date' in df.columns and 'annee' in df.columns:
-        df['date_full'] = df['date'].astype(str).str.zfill(5) + '/' + df['annee'].astype(str)
-        df['date'] = pd.to_datetime(df['date_full'], format='%d/%m/%Y', errors='coerce')
-        df = df[df['date'].notna()].copy()       # on ne garde que les dates valides
-        df['date'] = df['date'].astype(object)   # pour autoriser les None  
-        df = df.drop(columns=['date_full'])
+        
+        df["date_clean"] = (df["date"].str.replace(r"\.", "", regex=True).replace(mois_map, regex=True))
+        df["date"] = pd.to_datetime(df["date_clean"] + " " + df["annee"].astype(str),dayfirst=True)
+        # df = df[df['date'].notna()].copy()       # on ne garde que les dates valides
+        # df['date'] = df['date'].astype(object)   # pour autoriser les None  
+        df = df.drop(columns=['date_clean'])
     # Nettoyage des types et valeurs manquantes
     for col in ['club', 'epreuve', 'tour', 'pl', 'perf', 'vt', 'niv', 'pts', 'ville']:
         if col in df.columns:

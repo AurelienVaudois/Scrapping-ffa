@@ -31,13 +31,11 @@ def search_athletes(search_term: str) -> list[dict]:
 
         athletes = []
         for item in data:
-            hactseq = item.get('hactseq', '')
             athlete = {
-                'hactseq': hactseq,
                 'name': item.get('nom', ''),
                 'club': item.get('club', ''),
                 'sex': item.get('sexe', ''),
-                'seq': str_to_hex(hactseq)
+                'seq': item.get('actseq', ''),
             }
             athletes.append(athlete)
 

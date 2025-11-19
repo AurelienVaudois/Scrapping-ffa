@@ -156,3 +156,4 @@ if __name__ == "__main__":
             or (result is None and expected is None)
         ), f"Echec {chrono} → {result} au lieu de {expected}"
     print("✅ Tous les tests passent correctement.")
+

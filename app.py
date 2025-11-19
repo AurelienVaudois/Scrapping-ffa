@@ -11,9 +11,10 @@ from src.utils.athlete_utils import (
     save_results_to_postgres,
     save_athlete_info,
     clean_and_prepare_results_df,
+    get_all_athlete_results
 )
 from src.utils.file_utils import convert_time_to_seconds
-from src.utils.ffa_fast import get_all_results_fast as get_all_athlete_results
+# from src.utils.ffa_fast import get_all_results_fast as get_all_athlete_results
 
 # -----------------------------------------------------------------------------
 # DB connexion ----------------------------------------------------------------
@@ -26,6 +27,8 @@ except Exception:
     from dotenv import load_dotenv
     load_dotenv()
     db_url = os.getenv("DB_URL")
+    WA_API_URL = os.getenv("WA_API_URL")
+    WA_API_KEY = os.getenv("WA_API_KEY")
 engine = create_engine(db_url)
 # ----------------------------------------------------------------------------- 
 # UI settings -----------------------------------------------------------------
@@ -90,6 +93,8 @@ if athlete_options:
         "Sélectionnez l'athlète :", athlete_options, index=idx, key="athlete_select"
     )
     selected = athletes[athlete_options.index(choice)]
+    print(selected)
+    print(selected['seq'])
     st.session_state["selected_athlete"] = selected
 else:
     selected = None
@@ -132,6 +137,7 @@ if selected:
             with st.spinner("Scraping FFA…"):
                 try:
                     df = get_all_athlete_results(seq)
+                    print(df.shape)
                     if not df.empty:
                         df = clean_and_prepare_results_df(df, seq)
                         save_athlete_info(seq, name, club, sex, engine)
