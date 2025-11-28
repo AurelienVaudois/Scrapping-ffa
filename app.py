@@ -11,10 +11,10 @@ from src.utils.athlete_utils import (
     save_results_to_postgres,
     save_athlete_info,
     clean_and_prepare_results_df,
-    get_all_athlete_results
+    # get_all_athlete_results
 )
 from src.utils.file_utils import convert_time_to_seconds
-# from src.utils.ffa_fast import get_all_results_fast as get_all_athlete_results
+from src.utils.ffa_fast import get_all_results_fast as get_all_athlete_results
 
 # -----------------------------------------------------------------------------
 # DB connexion ----------------------------------------------------------------

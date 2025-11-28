@@ -1,114 +1,142 @@
-############################################################
-# ffa_fast.py – Scraper FFA encore plus rapide ✔️          #
-############################################################
-from __future__ import annotations
-
 import asyncio
-from typing import List, Optional, Dict, Any
-
 import httpx
+from bs4 import BeautifulSoup
 import pandas as pd
-import requests_cache
-from selectolax.parser import HTMLParser
+from datetime import datetime
+from typing import List, Optional
 
-# ---------------------------------------------------------------------------
-# Config réseau + cache ------------------------------------------------------
-# ---------------------------------------------------------------------------
-HEADERS = {"User-Agent": "Mozilla/5.0 (fast-ffa/2.1)"}
-requests_cache.install_cache("ffa_http_cache", expire_after=86_400)
+# Configuration
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+}
 
-# ---------------------------------------------------------------------------
-# Parsing utilitaires --------------------------------------------------------
-# ---------------------------------------------------------------------------
-_COLS = [
-    "Club",
-    "Date",
-    "Epreuve",
-    "Tour",
-    "Pl.",
-    "Perf.",
-    "Vt.",
-    "Niv.",
-    "Pts",
-    "Ville",
-]
+async def fetch_url(client, url):
+    try:
+        # Important: follow_redirects=True pour gérer les redirections éventuelles
+        resp = await client.get(url, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.text
+    except Exception as e:
+        print(f"Error fetching {url}: {e}")
+        return None
 
-
-def _parse_years(html: str) -> List[str]:
-    """Extrait la liste des saisons disponibles depuis le select HTML."""
-    tree = HTMLParser(html)
-    years: List[str] = []
-    for opt in tree.css("select.selectMain option"):
-        val = opt.attributes.get("value") or ""
-        if "saison=" in val:
-            years.append(val.split("saison=")[-1])
+async def get_athlete_years_async(client, seq: str) -> List[str]:
+    """Récupère les années disponibles (version async)"""
+    # On utilise la même URL que la version synchrone qui fonctionne
+    url = f"https://www.athle.fr/athletes/{seq}/resultats"
+    html = await fetch_url(client, url)
+    if not html:
+        return []
+    
+    soup = BeautifulSoup(html, "html.parser")
+    header = soup.find(lambda t: t.name in ("h2", "h3") and "Résultats par année" in t.get_text())
+    
+    years = []
+    if header:
+        for sib in header.find_next_siblings():
+            if sib.name in ("h2", "h3"):
+                break
+            for txt in sib.stripped_strings:
+                if txt.isdigit() and len(txt) == 4:
+                    y = int(txt)
+                    if 2000 <= y <= datetime.now().year:
+                        s = str(y)
+                        if s not in years:
+                            years.append(s)
     return years
 
+async def get_athlete_results_async(client, seq: str, year: str) -> Optional[pd.DataFrame]:
+    """Récupère les résultats d'une année (version async)"""
+    url = f"https://www.athle.fr/ajax/fiche-athlete-resultats.aspx?seq={seq}&annee={year}"
+    html = await fetch_url(client, url)
+    if not html:
+        return None
 
-# --- table parsing sans pandas.read_html ------------------------------------
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        # Nettoyage comme dans la version synchrone
+        for t in soup.select(".detail-inner-table"):
+            t.decompose()
 
-def _parse_results_table(html: str) -> Optional[List[Dict[str, Any]]]:
-    tree = HTMLParser(html)
-    tables = tree.css("table")
-    if len(tables) <= 3:
-        return None  # layout inattendu
+        thead = soup.select_one("thead")
+        tbody = soup.select_one("tbody")
+        if not thead or not tbody:
+            return None
 
-    rows = tables[3].css("tr")
-    if len(rows) <= 1:
-        return None  # table vide
+        headers = [th.get_text(strip=True) for th in thead.select("tr > th")]
+        if headers and not headers[-1]:
+            headers = headers[:-1]
 
-    data: List[Dict[str, Any]] = []
-    for r in rows[1:]:  # skip header row
-        cells = [c.text(strip=True) for c in r.css("td")]
-        if len(cells) < len(_COLS):
-            continue
-        data.append(dict(zip(_COLS, cells)))
-    return data
+        rows = []
+        for tr in tbody.find_all("tr", recursive=False):
+            classes = tr.get("class", [])
+            if any(c.startswith("detail-row") for c in classes):
+                continue
 
-# ---------------------------------------------------------------------------
-# Requêtes HTTP asynchrones ---------------------------------------------------
-# ---------------------------------------------------------------------------
-async def _fetch(client: httpx.AsyncClient, url: str) -> str:
-    r = await client.get(url, headers=HEADERS, follow_redirects=True, timeout=30)
-    r.raise_for_status()
-    return r.text
+            tds = tr.find_all("td", recursive=False)
+            if tds and "desktop-tablet-d-none" in tds[-1].get("class", []):
+                tds = tds[:-1]
 
+            cells = []
+            for i, td in enumerate(tds):
+                if i == len(headers) - 1:
+                    a = td.find("a")
+                    cells.append(a.get_text(strip=True) if a else td.get_text(" ", strip=True))
+                else:
+                    cells.append(td.get_text(" ", strip=True))
 
-async def _fetch_year_results(client: httpx.AsyncClient, seq: str, year: str) -> Optional[pd.DataFrame]:
-    url = f"https://bases.athle.fr/asp.net/athletes.aspx?base=resultats&seq={seq}&saison={year}"
-    html = await _fetch(client, url)
-    records = _parse_results_table(html)
-    if records:
-        df = pd.DataFrame.from_records(records)
-        df["Annee"] = year
+            cells = cells[:len(headers)]
+            rows.append(cells)
+
+        df = pd.DataFrame(rows, columns=headers)
+        df['Annee'] = year
         return df
-    return None
+    except Exception as e:
+        print(f"Error parsing results for {year}: {e}")
+        return None
 
-
-async def _gather_years(seq: str) -> List[str]:
-    url = f"https://bases.athle.fr/asp.net/athletes.aspx?base=bilans&seq={seq}"
-    async with httpx.AsyncClient() as client:
-        html = await _fetch(client, url)
-    return _parse_years(html)
-
-
-async def _async_collect(seq: str) -> pd.DataFrame:
-    years = await _gather_years(seq)
-    if not years:
-        return pd.DataFrame()
-
-    async with httpx.AsyncClient(http2=True, headers=HEADERS) as client:
-        dfs = await asyncio.gather(*[_fetch_year_results(client, seq, y) for y in years])
-
-    combined = pd.concat([d for d in dfs if d is not None], ignore_index=True)
-    if not combined.empty:
-        combined["seq"] = seq
-    return combined
-
-# ---------------------------------------------------------------------------
-# API publique synchronisée ---------------------------------------------------
-# ---------------------------------------------------------------------------
+async def get_all_results_async(seq: str) -> pd.DataFrame:
+    """Orchestre les appels asynchrones"""
+    # On désactive http2=True car certains serveurs/proxies le gèrent mal et cela peut causer des échecs silencieux
+    async with httpx.AsyncClient(headers=HEADERS, timeout=30.0, follow_redirects=True) as client:
+        # 1. Récupérer les années
+        years = await get_athlete_years_async(client, seq)
+        if not years:
+            # Fallback: si pas d'années trouvées, on renvoie vide
+            return pd.DataFrame(columns=['seq', 'Club', 'Date', 'Epreuve', 'Tour', 'Pl.', 'Perf.', 'Vt.', 'Niv.', 'Pts', 'Ville', 'Annee'])
+        
+        # 2. Lancer toutes les requêtes d'années en PARALLÈLE
+        tasks = [get_athlete_results_async(client, seq, year) for year in years]
+        results = await asyncio.gather(*tasks)
+        
+        # 3. Assembler les résultats
+        dfs = [df for df in results if df is not None]
+        
+        if dfs:
+            final_df = pd.concat(dfs, ignore_index=True)
+            final_df['seq'] = seq
+            return final_df
+        else:
+            return pd.DataFrame(columns=['seq', 'Club', 'Date', 'Epreuve', 'Tour', 'Pl.', 'Perf.', 'Vt.', 'Niv.', 'Pts', 'Ville', 'Annee'])
 
 def get_all_results_fast(seq: str) -> pd.DataFrame:
-    """Collecte toutes les saisons pour l'athlète `seq` (async → sync)."""
-    return asyncio.run(_async_collect(seq))
+    """
+    Fonction principale à appeler depuis votre code.
+    Remplace get_all_athlete_results.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        try:
+            import nest_asyncio
+            nest_asyncio.apply()
+        except ImportError:
+            raise RuntimeError(
+                "Vous êtes dans un environnement asynchrone (Jupyter, etc.). "
+                "Utilisez 'await get_all_results_async(seq)' ou installez 'nest_asyncio'."
+            )
+            
+    return asyncio.run(get_all_results_async(seq))

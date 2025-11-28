@@ -182,7 +182,8 @@ def clean_and_prepare_results_df(df, seq):
     if 'date' in df.columns and 'annee' in df.columns:
         
         df["date_clean"] = (df["date"].str.replace(r"\.", "", regex=True).replace(mois_map, regex=True))
-        df["date"] = pd.to_datetime(df["date_clean"] + " " + df["annee"].astype(str),dayfirst=True)
+        df["date"] = pd.to_datetime(df["date_clean"] + " " + df["annee"].astype(str),dayfirst=True,errors='coerce')
+        df = df.dropna(subset=['date'])
         # df = df[df['date'].notna()].copy()       # on ne garde que les dates valides
         # df['date'] = df['date'].astype(object)   # pour autoriser les None  
         df = df.drop(columns=['date_clean'])

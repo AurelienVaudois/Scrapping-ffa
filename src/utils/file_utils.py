@@ -65,7 +65,11 @@ def _to_seconds(h: Optional[str], min_: str, sec: str, cent: Optional[str]) -> f
     if h:
         total += int(h) * 3600
     if cent:
-        total += int(cent) / 100
+        # CORRECTION : Si 1 seul chiffre (ex: "7"), c'est des dixièmes -> *10
+        if len(cent) == 1:
+            total += int(cent) * 10 / 100
+        else:
+            total += int(cent) / 100
     return total
 
 def convert_time_to_seconds(time_str: str) -> Optional[float]:
@@ -83,16 +87,22 @@ def convert_time_to_seconds(time_str: str) -> Optional[float]:
     if m_par:
         time_str = m_par.group(1).strip()
 
+    # Helper interne pour les centièmes
+    def get_cent_val(c_str):
+        if not c_str: return 0.0
+        if len(c_str) == 1: return int(c_str) * 0.10
+        return int(c_str) / 100
+
     # ------------------------------------------------------------------
     # 1) Formats « secondes''centièmes » et « secondes"centièmes »
     # ------------------------------------------------------------------
     m_double_prime = _DOUBLE_PRIME_RE.fullmatch(time_str)
     if m_double_prime:
-        return int(m_double_prime.group("sec")) + int(m_double_prime.group("cent")) / 100
+        return int(m_double_prime.group("sec")) + get_cent_val(m_double_prime.group("cent"))
 
     m_sec = _SECONDS_RE.fullmatch(time_str)
     if m_sec:
-        return int(m_sec.group("sec")) + int(m_sec.group("cent")) / 100
+        return int(m_sec.group("sec")) + get_cent_val(m_sec.group("cent"))
 
     # ------------------------------------------------------------------
     # 2) Autres formats – on standardise puis on teste
