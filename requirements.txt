@@ -1,22 +1,20 @@
-# Dépendances du projet
-requests
-beautifulsoup4
+# Dépendances de base (avec versions fixées pour la stabilité)
+streamlit>=1.30.0
+altair>=5.0.0
 pandas
 numpy
 matplotlib
 seaborn
-streamlit
+requests
+beautifulsoup4
 lxml
 psycopg2-binary
 sqlalchemy
 python-dotenv
 
-# --- nouvelles dépendances pour le scraper asynchrone --------------------
-# http/2 support + cache + parsing HTML ultra‑rapide
-httpx[http2]       # client async avec multiplexing HTTP/2
-
-requests-cache    # cache disque 24 h
-selectolax        # parser HTML très rapide
-asyncpg           # COPY vers Postgres en mode asyncio
-# fastinference     # petit util partagé pour la méthode .clean()
+# --- Scraper asynchrone ---
+httpx[http2]
+requests-cache
+selectolax
+asyncpg
 tqdm
