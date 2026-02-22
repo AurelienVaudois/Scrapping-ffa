@@ -30,3 +30,16 @@ Livrer une première version claire et exploitable de la visualisation des perfo
 
 ## Résultat
 La version 1 offre une expérience plus intuitive, plus lisible, et plus flexible, tout en conservant la richesse d’analyse déjà présente dans le projet.
+
+## Evolutions récentes (itérations post-V1)
+- Amélioration du parsing des dates FFA dans le pipeline de nettoyage pour éviter la perte de performances à l’insertion.
+- Correction de la remontée d’insertion en base: retour du nombre réel de nouvelles lignes insérées.
+- Ajout d’une stratégie de recherche smart pour mieux gérer prénom + nom (cas des profils FFA complexes).
+- Ajout d’un mode de recherche WA uniquement pour l’athlète principal.
+- Ajout d’un mode de recherche WA uniquement dédié au 2e athlète en comparaison.
+- Filtrage du sélecteur d’épreuves: affichage limité aux épreuves avec performances disponibles.
+- Amélioration mobile du graphe: légende flottante dans le graphique, hauteur adaptative, marges compactes, titre plus court.
+- Formatage de l’axe Y selon la distance:
+	- sprint en secondes,
+	- demi-fond/fond en minutes:secondes,
+	- semi/marathon en heures:minutes.

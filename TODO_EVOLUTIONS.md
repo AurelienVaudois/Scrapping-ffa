@@ -16,9 +16,9 @@
 | # | Tâche | MoSCoW | Complexité (T-Shirt) | Notes |
 |---|---|---|---|---|
 | 4 | Créer un script de mise à jour de la base avec les nouveaux résultats | Should | S |  |
-| 10 | N’afficher le volet déroulant que pour les épreuves avec performances disponibles | Should | M |  |
-| 1 | Vérifier l’affichage sur téléphone et créer une version spécifique si nécessaire | Should | L |  |
-| 2 | Améliorer le scraping FFA (nom + prénom): éviter le fallback WA trop tôt pour les profils licenciés en France | Should | L |  |
+| 10 | N’afficher le volet déroulant que pour les épreuves avec performances disponibles | Should | M | ✅ Fait |
+| 1 | Vérifier l’affichage sur téléphone et créer une version spécifique si nécessaire | Should | L | 🔄 En cours |
+| 2 | Améliorer le scraping FFA (nom + prénom): éviter le fallback WA trop tôt pour les profils licenciés en France | Should | L | ✅ Fait |
 | 9 | Mettre en place un monitoring de l’app (usage, vitesse) sur Streamlit Cloud puis sur autre provider si nécessaire | Should | L |  |
 | 5 | Ajouter de nouvelles distances (1000m, 110m haies, 400m haies) | Could | S |  |
 | 3 | Optimiser la vitesse de scraping | Could | M |  |

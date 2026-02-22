@@ -2,8 +2,12 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
 import os
+import math
 import plotly.graph_objects as go
-from src.utils.http_utils import search_athletes            # FFA autocomplete
+from src.utils.http_utils import (
+    search_athletes,                                        # FFA autocomplete (legacy)
+    search_athletes_smart,                                  # FFA+LePistard smart search
+)
 from src.utils.wa_utils import (
     search_wa_athletes,                                     # WA autocomplete (fallback)
     fetch_and_store_wa_results                              # WA scraping (fallback)
@@ -74,25 +78,71 @@ if "athlete_options_compare" not in st.session_state:
 if "selected_athlete_compare" not in st.session_state:
     st.session_state["selected_athlete_compare"] = None
 
+
+def detect_mobile_device() -> bool:
+    mobile_markers = ["iphone", "android", "mobile", "ipad", "ipod"]
+    user_agent = ""
+    sec_ch_mobile = ""
+
+    try:
+        context_obj = getattr(st, "context", None)
+        if context_obj is not None and hasattr(context_obj, "headers"):
+            user_agent = str(context_obj.headers.get("user-agent", "")).lower()
+            sec_ch_mobile = str(context_obj.headers.get("sec-ch-ua-mobile", "")).strip()
+    except Exception:
+        user_agent = ""
+        sec_ch_mobile = ""
+
+    if sec_ch_mobile == "?1":
+        return True
+
+    return any(marker in user_agent for marker in mobile_markers)
+
+
+def merge_athlete_candidates(*groups: list[dict]) -> list[dict]:
+    merged = []
+    seen = set()
+    for group in groups:
+        for athlete in group or []:
+            seq = str(athlete.get("seq", "")).strip()
+            key = seq or f"{athlete.get('name', '')}|{athlete.get('club', '')}|{athlete.get('source', '')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(athlete)
+    return merged
+
 search_term = control_panel.text_input("Nom de l'athlète à rechercher", key="search_term")
+include_wa_search = control_panel.toggle(
+    "Athlète principal: mode WA uniquement",
+    value=False,
+    help="Activé: recherche World Athletics uniquement (FFA exclu). Désactivé: recherche FFA uniquement.",
+    key="include_wa_search",
+)
 
 # -----------------------------------------------------------------------------
 # 1. Recherche d'athlètes ------------------------------------------------------
 # -----------------------------------------------------------------------------
 if search_term and len(search_term) >= 3 and st.session_state.get("last_search_term") != search_term:
     with st.spinner("Recherche des athlètes…"):
-        # ① Autocomplétion FFA
-        athletes = search_athletes(search_term)
-        # ② Fallback World Athletics si FFA vide
-        if not athletes:
+        if include_wa_search:
             athletes = search_wa_athletes(search_term)
-            print(f"Fallback WA: {athletes}")
+            print(f"Mode WA direct activé: {len(athletes)} résultat(s)")
+        else:
+            # Recherche FFA
+            athletes = search_athletes_smart(search_term)
+            if not athletes:
+                athletes = search_athletes(search_term)
+
         st.session_state["athletes"] = athletes
         st.session_state["athlete_options"] = [
             f"{a['name']} ({a.get('club','')})" for a in athletes
         ]
         st.session_state["selected_athlete"] = None
         st.session_state["last_search_term"] = search_term
+
+        if not athletes and not include_wa_search:
+            st.info("Aucun profil trouvé sur FFA. Activez 'Inclure les profils World Athletics' pour élargir la recherche.")
 
 athletes = st.session_state.get("athletes", [])
 athlete_options = st.session_state.get("athlete_options", [])
@@ -185,6 +235,12 @@ if selected:
     compare_enabled = control_panel.toggle("Comparer avec un autre athlète", value=False, key="compare_toggle")
     selected_compare = None
     if compare_enabled:
+        include_wa_compare = control_panel.toggle(
+            "2e athlète: mode WA uniquement",
+            value=include_wa_search,
+            help="Activé: recherche World Athletics uniquement. Désactivé: recherche FFA uniquement.",
+            key="include_wa_search_compare",
+        )
         search_term_compare = control_panel.text_input("Nom du 2e athlète", key="search_term_compare")
         if (
             search_term_compare
@@ -192,15 +248,22 @@ if selected:
             and st.session_state.get("last_search_term_compare") != search_term_compare
         ):
             with st.spinner("Recherche du 2e athlète…"):
-                athletes_compare = search_athletes(search_term_compare)
-                if not athletes_compare:
+                if include_wa_compare:
                     athletes_compare = search_wa_athletes(search_term_compare)
+                else:
+                    athletes_compare = search_athletes_smart(search_term_compare)
+                    if not athletes_compare:
+                        athletes_compare = search_athletes(search_term_compare)
+
                 st.session_state["athletes_compare"] = athletes_compare
                 st.session_state["athlete_options_compare"] = [
                     f"{a['name']} ({a.get('club', '')})" for a in athletes_compare
                 ]
                 st.session_state["selected_athlete_compare"] = None
                 st.session_state["last_search_term_compare"] = search_term_compare
+
+                if not athletes_compare and not include_wa_compare:
+                    st.info("Aucun profil FFA pour le 2e athlète. Activez la recherche World Athletics si besoin.")
 
         athletes_compare = st.session_state.get("athletes_compare", [])
         athlete_options_compare = st.session_state.get("athlete_options_compare", [])
@@ -244,11 +307,33 @@ if selected:
 
     }
 
+    def get_available_epreuves(df_source: pd.DataFrame, epreuves_map: dict) -> dict:
+        if df_source.empty or "epreuve" not in df_source.columns:
+            return {}
+
+        out = {}
+        for label, aliases in epreuves_map.items():
+            if df_source["epreuve"].isin(aliases).any():
+                out[label] = aliases
+        return out
+
+    available_epreuves = get_available_epreuves(df, EPREUVES)
+    if not available_epreuves:
+        st.info("Aucune performance disponible sur les épreuves suivies pour cet athlète.")
+        st.stop()
+
+    available_labels = list(available_epreuves.keys())
+    if (
+        "epreuve_select" in st.session_state
+        and st.session_state["epreuve_select"] not in available_labels
+    ):
+        st.session_state.pop("epreuve_select")
+
     control_panel.subheader("Analyse")
     epreuve_choisie = control_panel.selectbox(
-        "Choisissez l'épreuve à afficher :", list(EPREUVES.keys()), index=0, key="epreuve_select"
+        "Choisissez l'épreuve à afficher :", available_labels, index=0, key="epreuve_select"
     )
-    filtres_epreuve = EPREUVES[epreuve_choisie]
+    filtres_epreuve = available_epreuves[epreuve_choisie]
 
     axis_mode_label = control_panel.radio(
         "Axe X",
@@ -270,12 +355,17 @@ if selected:
     )
 
     control_panel.subheader("Avancé")
+    is_mobile_device = detect_mobile_device()
+    default_chart_height = 500 if is_mobile_device else 850
+    min_chart_height = 420 if is_mobile_device else 600
+    max_chart_height = 900 if is_mobile_device else 1200
+
     with control_panel.expander("Affichage avancé", expanded=False):
         chart_height = st.slider(
             "Hauteur du graphique",
-            min_value=600,
-            max_value=1200,
-            value=850,
+            min_value=min_chart_height,
+            max_value=max_chart_height,
+            value=default_chart_height,
             step=50,
             key="chart_height",
         )
@@ -359,6 +449,56 @@ if selected:
             )
         )
 
+    def get_time_display_mode(epreuve_label: str) -> str:
+        if epreuve_label in {"100m", "200m", "400m"}:
+            return "seconds"
+        if epreuve_label in {"1/2 Marathon", "Marathon"}:
+            return "hours"
+        return "minutes"
+
+    def format_axis_time(seconds_value: float, mode: str) -> str:
+        total_seconds = float(seconds_value)
+        if mode == "seconds":
+            return f"{total_seconds:.1f}s"
+
+        rounded = int(round(total_seconds))
+        if mode == "hours":
+            hours = rounded // 3600
+            minutes = (rounded % 3600) // 60
+            return f"{hours}h{minutes:02d}"
+
+        minutes = rounded // 60
+        seconds = rounded % 60
+        return f"{minutes}:{seconds:02d}"
+
+    def build_time_ticks(time_values: list[float], mode: str) -> tuple[list[float], list[str]]:
+        if not time_values:
+            return [], []
+
+        min_time = float(min(time_values))
+        max_time = float(max(time_values))
+        if max_time <= min_time:
+            return [min_time], [format_axis_time(min_time, mode)]
+
+        base_step = {"seconds": 0.5, "minutes": 5.0, "hours": 300.0}[mode]
+        step = base_step
+        while ((max_time - min_time) / step) > 10:
+            step *= 2
+
+        start = math.floor(min_time / step) * step
+        end = math.ceil(max_time / step) * step
+
+        tickvals = []
+        current = start
+        guard = 0
+        while current <= end + (step * 0.1) and guard < 200:
+            tickvals.append(round(current, 6))
+            current += step
+            guard += 1
+
+        ticktext = [format_axis_time(val, mode) for val in tickvals]
+        return tickvals, ticktext
+
     df_primary_plot = prepare_plot_df(df, selected["seq"])
 
     if df_primary_plot.empty:
@@ -386,10 +526,13 @@ if selected:
 
         selected_x_col, selected_x_label = axis_map[axis_mode_label]
         selected_perf_mode, selected_perf_label = perf_map[perf_mode_label]
+        time_display_mode = get_time_display_mode(epreuve_choisie)
 
         fig = go.Figure()
+        plotted_times = []
         for athlete_name, color, athlete_df in athlete_series:
             df_mode = apply_perf_mode(athlete_df, selected_perf_mode)
+            plotted_times.extend(df_mode["time"].dropna().tolist())
             add_perf_trace_variant(
                 fig,
                 df_mode,
@@ -400,13 +543,44 @@ if selected:
                 True,
             )
 
+        y_tick_vals, y_tick_text = build_time_ticks(plotted_times, time_display_mode)
+        y_axis_title_map = {
+            "seconds": "Temps (s)",
+            "minutes": "Temps (mm:ss)",
+            "hours": "Temps (hh:mm)",
+        }
+
+        legend_font_size = 9 if is_mobile_device else 12
+        chart_margin = {"l": 8, "r": 8, "t": 42, "b": 18} if is_mobile_device else {"l": 40, "r": 30, "t": 70, "b": 40}
+        chart_title = (
+            f"{epreuve_choisie} · {selected_perf_label}"
+            if is_mobile_device
+            else f"Évolution des performances - {epreuve_choisie} ({selected_perf_label})"
+        )
+
         fig.update_layout(
-            title=f"Évolution des performances - {epreuve_choisie} ({selected_perf_label})",
+            title={"text": chart_title, "font": {"size": 13 if is_mobile_device else 18}},
             xaxis_title=selected_x_label,
-            yaxis_title="Temps (secondes)",
+            yaxis={
+                "title": y_axis_title_map[time_display_mode],
+                "tickmode": "array",
+                "tickvals": y_tick_vals,
+                "ticktext": y_tick_text,
+            },
             template="plotly_white",
             hovermode="closest",
-            legend_title="Athlète",
+            legend={
+                "title": {"text": "Athlète"},
+                "x": 0.99,
+                "y": 0.99,
+                "xanchor": "right",
+                "yanchor": "top",
+                "bgcolor": "rgba(255,255,255,0.65)",
+                "bordercolor": "rgba(0,0,0,0.2)",
+                "borderwidth": 1,
+                "font": {"size": legend_font_size},
+            },
+            margin=chart_margin,
             height=chart_height,
         )
 

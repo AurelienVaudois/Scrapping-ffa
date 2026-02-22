@@ -227,27 +227,53 @@ def clean_and_prepare_results_df(df, seq):
     }
     
     mois_map = {
-    "Janv": "Jan",
-    "Fév": "Feb", "Fev": "Feb",
-    "Mars": "Mar",
-    "Avr": "Apr",
-    "Mai": "May",
-    "Juin": "Jun",
-    "Juil": "Jul",
-    "Août": "Aug", "Aout": "Aug",
-    "Sept": "Sep",
-    "Oct": "Oct",
-    "Nov": "Nov",
-    "Déc": "Dec", "Dec": "Dec"
-}
+        "janv": "Jan",
+        "jan": "Jan",
+        "fév": "Feb",
+        "fev": "Feb",
+        "fév": "Feb",
+        "mars": "Mar",
+        "mar": "Mar",
+        "avr": "Apr",
+        "avr.": "Apr",
+        "mai": "May",
+        "juin": "Jun",
+        "jun": "Jun",
+        "juil": "Jul",
+        "juil.": "Jul",
+        "août": "Aug",
+        "aout": "Aug",
+        "aoû": "Aug",
+        "sept": "Sep",
+        "sept.": "Sep",
+        "oct": "Oct",
+        "oct.": "Oct",
+        "nov": "Nov",
+        "nov.": "Nov",
+        "déc": "Dec",
+        "dec": "Dec",
+        "déc.": "Dec",
+        "dec.": "Dec",
+    }
     
     df = df.rename(columns=col_map)
     # df['seq'] = seq
     # Reconstitue la date complète avant conversion
     if 'date' in df.columns and 'annee' in df.columns:
-        
-        df["date_clean"] = (df["date"].str.replace(r"\.", "", regex=True).replace(mois_map, regex=True))
-        df["date"] = pd.to_datetime(df["date_clean"] + " " + df["annee"].astype(str),dayfirst=True,errors='coerce')
+        date_series = df["date"].astype(str).str.strip().str.lower()
+        date_series = date_series.str.replace(r"\.", "", regex=True)
+
+        for fr_token, en_token in mois_map.items():
+            date_series = date_series.str.replace(fr_token, en_token.lower(), regex=False)
+
+        date_series = date_series.str.replace(r"\s+", " ", regex=True).str.strip()
+
+        df["date_clean"] = date_series.str.title()
+        df["date"] = pd.to_datetime(
+            df["date_clean"] + " " + df["annee"].astype(str),
+            format="%d %b %Y",
+            errors='coerce',
+        )
         df = df.dropna(subset=['date'])
         # df = df[df['date'].notna()].copy()       # on ne garde que les dates valides
         # df['date'] = df['date'].astype(object)   # pour autoriser les None  
@@ -310,19 +336,23 @@ def save_results_to_postgres(
     values  = [tuple(row) for row in df.to_numpy()]
 
     placeholders = ",".join(columns)
+    count_sql = f"SELECT COUNT(*) FROM {table} WHERE seq = %s"
     insert_sql = f"""
         INSERT INTO {table} ({placeholders})
         VALUES %s
         ON CONFLICT (seq, date, epreuve, tour, perf) DO NOTHING
-        RETURNING 1
     """
 
     # ─── NEW ─── remplacement du bloc connexion/curseur ──────────────────
     raw_conn = engine.raw_connection()          # ← plus de « with »
     try:
         with closing(raw_conn.cursor()) as cur:
+            cur.execute(count_sql, (seq,))
+            before_count = cur.fetchone()[0]
             execute_values(cur, insert_sql, values, page_size=batch_size)
+            cur.execute(count_sql, (seq,))
+            after_count = cur.fetchone()[0]
         raw_conn.commit()
     finally:
         raw_conn.close()
-    return len(values)
+    return max(0, int(after_count) - int(before_count))
