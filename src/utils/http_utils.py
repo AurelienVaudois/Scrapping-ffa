@@ -18,26 +18,54 @@ def search_athletes(search_term: str) -> list[dict]:
     Returns:
         list[dict]: Liste de dictionnaires contenant les informations des athlètes.
     """
-    if len(search_term) < 3:
+    cleaned_term = (search_term or "").strip()
+    if len(cleaned_term) < 3:
         print("Search term must be at least 3 characters long.")
         return []
 
-    url = f"https://www.athle.fr/ajax/autocompletion.aspx?mode=1&recherche={search_term}"
+    search_candidates = [cleaned_term]
+    parts = [part.strip() for part in cleaned_term.split() if part.strip()]
+    if len(parts) > 1:
+        search_candidates.extend([parts[0], parts[-1]])
+        search_candidates.extend([p for p in sorted(parts, key=len, reverse=True) if len(p) >= 3])
+
+    deduped_candidates = []
+    seen_candidates = set()
+    for candidate in search_candidates:
+        key = candidate.lower()
+        if len(candidate) >= 3 and key not in seen_candidates:
+            deduped_candidates.append(candidate)
+            seen_candidates.add(key)
 
     try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-
         athletes = []
-        for item in data:
-            athlete = {
-                'name': item.get('nom', ''),
-                'club': item.get('club', ''),
-                'sex': item.get('sexe', ''),
-                'seq': item.get('actseq', ''),
-            }
-            athletes.append(athlete)
+        seen_seq = set()
+
+        for candidate in deduped_candidates:
+            response = requests.get(
+                "https://www.athle.fr/ajax/autocompletion.aspx",
+                params={"mode": 1, "recherche": candidate},
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            for item in data:
+                seq = item.get('actseq', '')
+                if seq in seen_seq:
+                    continue
+
+                athlete = {
+                    'name': item.get('nom', ''),
+                    'club': item.get('club', ''),
+                    'sex': item.get('sexe', ''),
+                    'seq': seq,
+                }
+                athletes.append(athlete)
+                seen_seq.add(seq)
+
+            if athletes:
+                break
 
         return athletes
 
