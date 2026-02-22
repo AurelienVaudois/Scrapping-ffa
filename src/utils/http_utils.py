@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Fonctions utilitaires HTTP
 import requests
 import json
