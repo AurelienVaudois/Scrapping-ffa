@@ -1,15 +1,16 @@
 import os
+import re  # <--- Ajout de re
 from datetime import datetime
 from sqlalchemy import create_engine, text
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from dotenv import load_dotenv
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from psycopg2.extras import execute_values
 from sqlalchemy.engine import Engine
-from contextlib import closing          # 👈 Ajout
+from contextlib import closing
 
 load_dotenv()
 db_url = os.getenv("DB_URL")
@@ -130,22 +131,86 @@ def get_all_athlete_results(seq: str) -> pd.DataFrame:
         return pd.DataFrame(columns=['seq', 'Club', 'Date', 'Epreuve', 'Tour', 'Pl.', 'Perf.', 'Vt.', 'Niv.', 'Pts', 'Ville', 'Annee'])
 
 
-def save_athlete_info(seq: str, name: str, club: str, sex: str, engine, table_name: str = 'athletes'):
+def get_athlete_birth_info(seq: str) -> Tuple[Optional[str], Optional[int]]:
     """
-    Insère ou met à jour les informations d'un athlète dans la table athletes (PostgreSQL).
-    Met à jour la colonne last_update à chaque appel.
+    Scrape la page de l'athlète pour récupérer sa date de naissance brute et son année.
+    Gère les formats "Né(e) le : JJ/MM/AAAA" et "Né(e) en : AAAA".
+    
+    Returns:
+        Tuple[str, int]: (date_brute, année) ou (None, None)
+    """
+    url = f"https://www.athle.fr/athletes/{seq}/resultats"
+    try:
+        response = requests.get(url)
+        if response.status_code != 200:
+            return None, None
+            
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Recherche du label "Né(e)"
+        label_span = soup.find('span', string=lambda t: t and "Né(e)" in t)
+        
+        if label_span:
+            # Récupération du texte suivant (soit sibling direct, soit dans un <b>)
+            raw_text = label_span.next_sibling
+            if not raw_text or not raw_text.strip():
+                next_tag = label_span.find_next_sibling('b')
+                if next_tag:
+                    raw_text = next_tag.text
+            
+            if raw_text:
+                full_text = raw_text.strip()
+                # On prend le premier "mot" qui est généralement la date (ex: "19/07/1993" ou "1998")
+                # On ignore ce qui suit (ex: "à Paris")
+                date_part = full_text.split(' ')[0]
+                
+                # Extraction de l'année via Regex (cherche 4 chiffres consécutifs)
+                match_year = re.search(r'(\d{4})', date_part)
+                year = int(match_year.group(1)) if match_year else None
+                
+                return date_part, year
+                
+    except Exception as e:
+        print(f"Erreur scraping date naissance pour {seq}: {e}")
+        
+    return None, None
+
+
+def save_athlete_info(seq: str, name: str, club: str, sex: str, engine, 
+                     birth_date_raw: str = None, birth_year: int = None, 
+                     table_name: str = 'athletes'):
+    """
+    Insère ou met à jour les informations d'un athlète, y compris la date de naissance.
     """
     now = datetime.utcnow()
+    
+    # Si les infos de naissance ne sont pas fournies, on essaie de les scraper à la volée
+    if birth_date_raw is None or birth_year is None:
+        scraped_raw, scraped_year = get_athlete_birth_info(seq)
+        # On ne remplace que si on a trouvé quelque chose, sinon on garde None
+        if scraped_raw: birth_date_raw = scraped_raw
+        if scraped_year: birth_year = scraped_year
+
     with engine.begin() as conn:
         conn.execute(text(f'''
-            INSERT INTO {table_name} (seq, name, club, sex, last_update)
-            VALUES (:seq, :name, :club, :sex, :last_update)
+            INSERT INTO {table_name} (seq, name, club, sex, birth_date_raw, birth_year, last_update)
+            VALUES (:seq, :name, :club, :sex, :birth_date_raw, :birth_year, :last_update)
             ON CONFLICT (seq) DO UPDATE SET
                 name=EXCLUDED.name,
                 club=EXCLUDED.club,
                 sex=EXCLUDED.sex,
+                birth_date_raw=COALESCE(EXCLUDED.birth_date_raw, athletes.birth_date_raw),
+                birth_year=COALESCE(EXCLUDED.birth_year, athletes.birth_year),
                 last_update=EXCLUDED.last_update
-        '''), dict(seq=seq, name=name, club=club, sex=sex, last_update=now))
+        '''), dict(
+            seq=seq, 
+            name=name, 
+            club=club, 
+            sex=sex, 
+            birth_date_raw=birth_date_raw, 
+            birth_year=birth_year, 
+            last_update=now
+        ))
 
 
 def clean_and_prepare_results_df(df, seq):

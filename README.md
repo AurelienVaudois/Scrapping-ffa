@@ -2,7 +2,7 @@
 
 Application d'analyse et de suivi des performances d'athlétisme, agrégeant les données de la **Fédération Française d'Athlétisme (FFA)** et de **World Athletics (WA)**.
 
-Ce projet permet de visualiser l'évolution des performances d'un athlète sur différentes distances (Sprint, Demi-fond, Fond, Route) via une interface web interactive.
+Ce projet permet de visualiser l'évolution des performances sur différentes distances (Sprint, Demi-fond, Fond, Route), puis de comparer un second athlète sur le même graphique.
 
 ## ✨ Fonctionnalités principales
 
@@ -11,7 +11,12 @@ Ce projet permet de visualiser l'évolution des performances d'un athlète sur d
 - **🌍 Multi-Sources** :
   - Source primaire : **FFA** (bases.athle.fr)
   - Fallback : **World Athletics** (si l'athlète n'est pas trouvé en France).
-- **📊 Visualisation Interactive** : Graphiques d'évolution des performances (Matplotlib/Seaborn intégrés dans Streamlit).
+- **📊 Visualisation Interactive (Plotly)** :
+  - Vue principale **mono-athlète** (parcours simple par défaut)
+  - **Comparaison optionnelle** avec un 2e athlète
+  - Choix du type de graphique : **Nuage de points** ou **Lignes + points**
+  - Contrôles d'analyse : **Axe X (Date / Âge / Année)** et **Filtre performance (Toutes / Best année / Best âge)**
+  - Infobulle enrichie : performance, date, lieu, âge, type indoor/outdoor, source (FFA/WA)
 - **💾 Base de Données Robuste** : Stockage persistant sur **PostgreSQL** (via NeonDB ou local) pour éviter de re-scraper les données existantes.
 - **⚡ Mise à jour intelligente** : Détection des doublons et mise à jour incrémentale.
 
@@ -24,7 +29,7 @@ Ce projet permet de visualiser l'évolution des performances d'un athlète sur d
   - `httpx` (Asynchrone HTTP/2)
   - `BeautifulSoup4` & `Selectolax` (Parsing HTML)
 - **Data Science** : Pandas, NumPy
-- **Visualisation** : Matplotlib, Seaborn
+- **Visualisation** : Plotly (app), Matplotlib/Seaborn (notebooks d'exploration)
 
 ## 📂 Structure du projet
 
@@ -33,6 +38,7 @@ Scrapping-ffa/
 ├── app.py                 # 🚀 Point d'entrée de l'application Streamlit
 ├── requirements.txt       # Dépendances Python
 ├── .env                   # Variables d'environnement (non versionné)
+├── exploration/           # Notebooks d'exploration (athle_live, graph_plotly, etc.)
 ├── src/
 │   ├── utils/
 │   │   ├── ffa_fast.py    # Scraper asynchrone optimisé pour la FFA
@@ -41,7 +47,6 @@ Scrapping-ffa/
 │   │   ├── http_utils.py  # Utilitaires requêtes HTTP
 │   │   └── file_utils.py  # Conversion de temps et formats
 │   └── data_storage/      # Gestionnaires de base de données
-└── notebooks/             # Notebooks d'exploration (evol_scrap_ffa.ipynb, etc.)
 ```
 
 ## 🚀 Installation et Utilisation
@@ -76,7 +81,12 @@ streamlit run app.py
 L'application sera accessible sur `http://localhost:8501`.
 
 ## 🧪 Notebooks
-Des notebooks Jupyter sont disponibles pour tester les scrapers individuellement ou effectuer des analyses de données avancées (ex: `evol_scrap_ffa.ipynb`).
+Les notebooks Jupyter d'exploration sont regroupés dans le dossier `exploration/` pour les tests de scraping, analyses et prototypage de visualisation.
+
+## 🧭 Expérience utilisateur (résumé)
+- **Sidebar structurée** : `Athlète` → `Comparaison` → `Analyse` → `Avancé`
+- **Comparaison progressive** : l'utilisateur commence avec 1 athlète puis ajoute le 2e uniquement si besoin
+- **Affichage avancé** : réglage de hauteur du graphique dans un panneau repliable
 
 ## 👤 Auteur
 Projet développé par **Aurélien Vaudois**.
