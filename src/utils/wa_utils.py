@@ -162,25 +162,79 @@ def _prepare_results_df(raw: pd.DataFrame, seq: str) -> pd.DataFrame:
 # 4. Scraping + insertion DB ##################################################
 ###############################################################################
 
-def fetch_and_store_wa_results(name: str, engine: Engine):
-    """Scrape World Athletics, normalise les données puis insère dans Postgres."""
-    raw_df = _wa_results(name, use_threading=True)
-    if raw_df.empty or "info" in raw_df.columns:
-        return pd.DataFrame()
+from src.utils.athlete_utils import save_athlete_info, save_results_to_postgres
+from src.utils.scraping_wa import search_athletes_by_name, get_athlete_results_by_name
 
-    aa_id = int(raw_df["athlete_id"].iloc[0])
-    seq = f"WA_{aa_id}"
+def fetch_and_store_wa_results(name_query: str, engine):
+    """
+    Cherche un athlète sur WA, récupère ses résultats et sauvegarde tout en base.
+    """
+    # 1. Recherche de l'athlète
+    df_search = search_athletes_by_name(name_query)
+    
+    if df_search.empty:
+        print(f"Aucun athlète trouvé sur WA pour : {name_query}")
+        return pd.DataFrame() # Retourne un DF vide au lieu de None pour éviter le crash
 
-    final_df = _prepare_results_df(raw_df, seq)
-    if final_df.empty:
-        return pd.DataFrame()
+    # On prend le premier résultat
+    athlete = df_search.iloc[0]
+    
+    # 1. L'ID s'appelle 'aaAthleteId' et on ajoute le préfixe WA_
+    wa_id = f"WA_{athlete['aaAthleteId']}"
+    
+    # 2. Le nom est séparé en 'givenName' et 'familyName'
+    full_name = f"{athlete['givenName']} {athlete['familyName']}"
+    
+    # 3. Le pays et le sexe
+    country = athlete.get('country', 'WA')
+    
+    # Correction du sexe (Men -> M)
+    raw_sex = athlete.get('gender', '')
+    if str(raw_sex).lower() == 'men':
+        sex = 'M'
+    elif str(raw_sex).lower() == 'women':
+        sex = 'F'
+    else:
+        sex = str(raw_sex)[0].upper() if raw_sex else ''
+    
+    # Gestion de la date de naissance
+    birth_date_raw = athlete.get('birthDate')
+    birth_year = None
 
-    from src.utils.athlete_utils import save_athlete_info, save_results_to_postgres
+    if birth_date_raw:
+        try:
+            birth_date_raw = str(birth_date_raw).strip()
+            parts = birth_date_raw.split()
+            if parts:
+                possible_year = parts[-1]
+                if len(possible_year) == 4 and possible_year.isdigit():
+                    birth_year = int(possible_year)
+        except Exception:
+            pass
 
-    save_athlete_info(seq, name, club="", sex="", engine=engine)
-    save_results_to_postgres(final_df, seq, engine)
+    print(f"Sauvegarde infos athlète WA : {full_name} ({birth_date_raw})")
 
-    return final_df
+    # 2. Sauvegarde des infos athlète
+    save_athlete_info(
+        seq=wa_id,
+        name=full_name,
+        club=country,
+        sex=sex,
+        engine=engine,
+        birth_date_raw=birth_date_raw,
+        birth_year=birth_year
+    )
+
+    # 3. Récupération et sauvegarde des résultats
+    raw_df = get_athlete_results_by_name(full_name)
+    
+    # Standardisation
+    df_clean = _prepare_results_df(raw_df, wa_id)
+
+    if not df_clean.empty:
+        save_results_to_postgres(df_clean, wa_id, engine)
+    
+    return df_clean # <--- C'est ce return qui manquait !
 
 # ─── helper lecture-seule : DataFrame WA sans écriture DB ──────────────────
 def fetch_wa_results_df(name: str) -> pd.DataFrame:
@@ -205,7 +259,7 @@ def fetch_wa_results_df(name: str) -> pd.DataFrame:
     if raw_df.empty or "info" in raw_df.columns:
         return pd.DataFrame()
 
-    # 2. Construction de l’identifiant unique « WA_<athlete_id> »
+    # 2. Construction de l’identifiant unique « WA_<athlete_id> »"
     aa_id = int(raw_df["athlete_id"].iloc[0])
     seq   = f"WA_{aa_id}"
 

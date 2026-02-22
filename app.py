@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
 import os
+import plotly.graph_objects as go
 from src.utils.http_utils import search_athletes            # FFA autocomplete
 from src.utils.wa_utils import (
     search_wa_athletes,                                     # WA autocomplete (fallback)
@@ -39,18 +40,24 @@ st.markdown(
     """
     ### 📈 Suivi des performances athlétiques
 
-    Entrez le **nom d'un athlète** pour visualiser l'évolution de ses performances sur :
+    Entrez le **nom d'un athlète** pour visualiser l'évolution de ses performances :
 
     - **SPRINT** : **100m**, **200m**, **400m**
     - **MIDDLE DISTANCE** : **800m**, **1500m**, **3000m**, **3000m Steeple**
     - **LONG DISTANCE** : **5000m**, **10000m**, **Semi-Marathon**, **Marathon**
-    - **ROUTE** : **5km**, **10km** 
-  
-    ---
-    🔎 *Si l'athlète n'est pas encore dans la base, le scraping sera lancé automatiquement.*
+    - **ROUTE** : **5km**, **10km**
+
+    Comparez ensuite avec un 2e athlète, choisissez le type de graphique et ajustez l'analyse
+    (axe X, filtre de performance) depuis le panneau de contrôle.
+
+    🔎 *Si l'athlète n'est pas encore dans la base, le scraping est lancé automatiquement.*
     """,
     unsafe_allow_html=True
 )
+
+control_panel = st.sidebar
+control_panel.title("🎛️ Contrôles")
+control_panel.subheader("Athlète")
 
 
 # --- State init ----------------------------------------------------------------
@@ -60,8 +67,14 @@ if "athlete_options" not in st.session_state:
     st.session_state["athlete_options"] = []
 if "selected_athlete" not in st.session_state:
     st.session_state["selected_athlete"] = None
+if "athletes_compare" not in st.session_state:
+    st.session_state["athletes_compare"] = []
+if "athlete_options_compare" not in st.session_state:
+    st.session_state["athlete_options_compare"] = []
+if "selected_athlete_compare" not in st.session_state:
+    st.session_state["selected_athlete_compare"] = None
 
-search_term = st.text_input("Nom de l'athlète à rechercher", key="search_term")
+search_term = control_panel.text_input("Nom de l'athlète à rechercher", key="search_term")
 
 # -----------------------------------------------------------------------------
 # 1. Recherche d'athlètes ------------------------------------------------------
@@ -89,7 +102,7 @@ if athlete_options:
     idx = 0
     if selected_athlete and selected_athlete in athletes:
         idx = athletes.index(selected_athlete)
-    choice = st.selectbox(
+    choice = control_panel.selectbox(
         "Sélectionnez l'athlète :", athlete_options, index=idx, key="athlete_select"
     )
     selected = athletes[athlete_options.index(choice)]
@@ -103,64 +116,110 @@ else:
 # 2. Chargement / scraping des résultats --------------------------------------
 # -----------------------------------------------------------------------------
 if selected:
-    seq = selected["seq"]
-    name = selected["name"]
-    club = selected.get("club", "")
-    sex = selected.get("sex", "")
-
     @st.cache_data(show_spinner=False)
     def get_results_from_db(seq_: str) -> pd.DataFrame:
         query = "SELECT * FROM results WHERE seq = %(seq)s"
         return pd.read_sql_query(query, engine, params={"seq": seq_})
 
-    df = get_results_from_db(seq)
+    @st.cache_data(show_spinner=False)
+    def get_birth_year_from_db(seq_: str):
+        query = "SELECT birth_year FROM athletes WHERE seq = %(seq)s"
+        df_birth = pd.read_sql_query(query, engine, params={"seq": seq_})
+        if df_birth.empty:
+            return None
+        birth_year = pd.to_numeric(df_birth.iloc[0]["birth_year"], errors="coerce")
+        if pd.isna(birth_year):
+            return None
+        return int(birth_year)
 
-    if df.empty:
-        # Détermine la source de l'athlète (WA ou FFA) pour savoir quel scraper lancer
-        is_wa_athlete = selected.get("source") == "WA" or str(seq).startswith("WA_")
+    def load_or_scrape_results(athlete: dict, show_loaded_message: bool = True) -> pd.DataFrame:
+        seq_local = athlete["seq"]
+        name_local = athlete["name"]
+        club_local = athlete.get("club", "")
+        sex_local = athlete.get("sex", "")
 
-        if is_wa_athlete:
-            # -----------------------------------------------------------------
-            # Scraping World Athletics (fallback direct)
-            # -----------------------------------------------------------------
-            with st.spinner("Scraping World Athletics…"):
-                df = fetch_and_store_wa_results(name, engine)
-                if not df.empty:
-                    st.cache_data.clear()
-                    st.success("Données WA ajoutées à la base.")
-                else:
-                    st.warning("Aucune donnée trouvée sur World Athletics.")
-        else:
-            # -----------------------------------------------------------------
-            # Scraping FFA (source par défaut)
-            # -----------------------------------------------------------------
-            with st.spinner("Scraping FFA…"):
-                try:
-                    df = get_all_athlete_results(seq)
-                    print(df.shape)
-                    if not df.empty:
-                        df = clean_and_prepare_results_df(df, seq)
-                        save_athlete_info(seq, name, club, sex, engine)
-                        save_results_to_postgres(df, seq, engine)
+        df_local = get_results_from_db(seq_local)
+        if df_local.empty:
+            is_wa_athlete = athlete.get("source") == "WA" or str(seq_local).startswith("WA_")
+
+            if is_wa_athlete:
+                with st.spinner(f"Scraping World Athletics pour {name_local}…"):
+                    df_local = fetch_and_store_wa_results(name_local, engine)
+                    if not df_local.empty:
                         st.cache_data.clear()
-                        st.success("Données FFA ajoutées à la base.")
+                        st.success(f"Données WA ajoutées à la base pour {name_local}.")
                     else:
-                        # Rien côté FFA, on tente World Athletics en dernier recours
-                        st.info("Aucune donnée FFA, tentative World Athletics…")
-                        df = fetch_and_store_wa_results(name, engine)
-                        if not df.empty:
+                        st.warning(f"Aucune donnée trouvée sur World Athletics pour {name_local}.")
+            else:
+                with st.spinner(f"Scraping FFA pour {name_local}…"):
+                    try:
+                        df_local = get_all_athlete_results(seq_local)
+                        if not df_local.empty:
+                            df_local = clean_and_prepare_results_df(df_local, seq_local)
+                            save_athlete_info(seq_local, name_local, club_local, sex_local, engine)
+                            save_results_to_postgres(df_local, seq_local, engine)
                             st.cache_data.clear()
-                            st.success("Données WA ajoutées à la base.")
+                            st.success(f"Données FFA ajoutées à la base pour {name_local}.")
                         else:
-                            st.warning("Aucune donnée trouvée sur FFA ni WA.")
-                except Exception as e:
-                    st.error(f"Erreur scraping FFA : {e}")
-    else:
-        st.success("Données chargées depuis la base.")
+                            st.info(f"Aucune donnée FFA pour {name_local}, tentative World Athletics…")
+                            df_local = fetch_and_store_wa_results(name_local, engine)
+                            if not df_local.empty:
+                                st.cache_data.clear()
+                                st.success(f"Données WA ajoutées à la base pour {name_local}.")
+                            else:
+                                st.warning(f"Aucune donnée trouvée sur FFA ni WA pour {name_local}.")
+                    except Exception as e:
+                        st.error(f"Erreur scraping FFA pour {name_local} : {e}")
+        else:
+            if show_loaded_message:
+                st.success(f"Données chargées depuis la base pour {name_local}.")
+
+        return df_local
+
+    df = load_or_scrape_results(selected, show_loaded_message=True)
 
     # -------------------------------------------------------------------------
     # 3. Affichage (identique à ton code d’origine) ----------------------------
     # -------------------------------------------------------------------------
+    control_panel.subheader("Comparaison")
+    compare_enabled = control_panel.toggle("Comparer avec un autre athlète", value=False, key="compare_toggle")
+    selected_compare = None
+    if compare_enabled:
+        search_term_compare = control_panel.text_input("Nom du 2e athlète", key="search_term_compare")
+        if (
+            search_term_compare
+            and len(search_term_compare) >= 3
+            and st.session_state.get("last_search_term_compare") != search_term_compare
+        ):
+            with st.spinner("Recherche du 2e athlète…"):
+                athletes_compare = search_athletes(search_term_compare)
+                if not athletes_compare:
+                    athletes_compare = search_wa_athletes(search_term_compare)
+                st.session_state["athletes_compare"] = athletes_compare
+                st.session_state["athlete_options_compare"] = [
+                    f"{a['name']} ({a.get('club', '')})" for a in athletes_compare
+                ]
+                st.session_state["selected_athlete_compare"] = None
+                st.session_state["last_search_term_compare"] = search_term_compare
+
+        athletes_compare = st.session_state.get("athletes_compare", [])
+        athlete_options_compare = st.session_state.get("athlete_options_compare", [])
+        selected_compare_state = st.session_state.get("selected_athlete_compare")
+
+        if athlete_options_compare:
+            idx_compare = 0
+            if selected_compare_state and selected_compare_state in athletes_compare:
+                idx_compare = athletes_compare.index(selected_compare_state)
+
+            choice_compare = control_panel.selectbox(
+                "Sélectionnez le 2e athlète :",
+                athlete_options_compare,
+                index=idx_compare,
+                key="athlete_select_compare",
+            )
+            selected_compare = athletes_compare[athlete_options_compare.index(choice_compare)]
+            st.session_state["selected_athlete_compare"] = selected_compare
+
     EPREUVES = {
         
         "100m": ["100m"],
@@ -184,117 +243,177 @@ if selected:
         
 
     }
-    epreuve_choisie = st.selectbox(
+
+    control_panel.subheader("Analyse")
+    epreuve_choisie = control_panel.selectbox(
         "Choisissez l'épreuve à afficher :", list(EPREUVES.keys()), index=0, key="epreuve_select"
     )
     filtres_epreuve = EPREUVES[epreuve_choisie]
 
-    if not df.empty and "epreuve" in df.columns:
-        df_epreuve = df[df["epreuve"].isin(filtres_epreuve)].copy()
-        if not df_epreuve.empty:
-            import numpy as np
-            import seaborn as sns
-            import matplotlib.pyplot as plt
-            import matplotlib
-            
-            is_long_distance = any(x in epreuve_choisie.lower() for x in ["1/2 marathon", "marathon"])
-            is_sprint = any(x in epreuve_choisie.lower() for x in ["100m", "200m", "400m"])
+    axis_mode_label = control_panel.radio(
+        "Axe X",
+        ["Date", "Âge", "Année"],
+        horizontal=True,
+        key="axis_mode",
+    )
+    perf_mode_label = control_panel.radio(
+        "Filtre performance",
+        ["Toutes", "Best année", "Best âge"],
+        horizontal=True,
+        key="perf_mode",
+    )
+    chart_type = control_panel.radio(
+        "Type de graphique",
+        ["Nuage de points", "Lignes + points"],
+        horizontal=True,
+        key="chart_type_mode",
+    )
 
-            df_epreuve["Lieu"] = np.where(
-                df_epreuve.epreuve.str.contains("Piste Courte"), "Indoor", "Outdoor"
-            )
-            df_epreuve["date"] = pd.to_datetime(df_epreuve["date"], errors="coerce")
-            df_epreuve["Annee"] = df_epreuve["date"].dt.year
-            df_epreuve = df_epreuve[
-                ~df_epreuve["perf"].str.contains("|".join(["DNS", "DNF", "AB", "DQ"]), na=False)
-            ]
-            df_epreuve["time"] = df_epreuve["perf"].apply(convert_time_to_seconds)
-            df_epreuve = df_epreuve.dropna(subset=["date", "time"]).sort_values("date")
+    control_panel.subheader("Avancé")
+    with control_panel.expander("Affichage avancé", expanded=False):
+        chart_height = st.slider(
+            "Hauteur du graphique",
+            min_value=600,
+            max_value=1200,
+            value=850,
+            step=50,
+            key="chart_height",
+        )
 
-            best_performances = (
-                df_epreuve[["perf", "time", "date", "Annee"]]
-                .sort_values("time", ascending=True)
-                .groupby("Annee")
-                .first()
-                .reset_index()
-            )
+    def prepare_plot_df(df_source: pd.DataFrame, seq_local: str) -> pd.DataFrame:
+        if df_source.empty or "epreuve" not in df_source.columns:
+            return pd.DataFrame()
 
-            matplotlib.use("Agg")
-            sns.set_style("whitegrid")
-            medium_colors = [
-                "#6A0572",
-                "#9A1672",
-                "#E8515A",
-                "#FFA500",
-                "#FFC947",
-                "#00A878",
-                "#008DD5",
-                "#6E7BA8",
-                "#9C82B8",
-                "#F08CA5",
-                "#4CBB17",
-                "#FF6B6B",
-            ]
-            
-            def format_time(x):
-                if is_long_distance:
-                    h = int(x) // 3600
-                    m = (int(x) % 3600) // 60
-                    s = int(x) % 60
-                    return f"{h}:{m:02d}:{s:02d}"
-                if is_sprint:
-                    seconds = int(x) % 60
-                    centiseconds = int((x * 100) % 100)                   
-                    return f"{seconds:02d}''{centiseconds:02d}"
-                else:
-                    minutes = int(x) // 60
-                    seconds = int(x) % 60
-                    centiseconds = int((x * 100) % 100)
-                    return f"{minutes}'{seconds:02d}''{centiseconds:02d}"
+        df_plot = df_source[df_source["epreuve"].isin(filtres_epreuve)].copy()
+        if df_plot.empty:
+            return pd.DataFrame()
 
-
-            fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
-            scatter_plot = sns.scatterplot(
-                data=df_epreuve,
-                x="date",
-                y="time",
-                hue="Annee",
-                style="Lieu",
-                s=70,
-                palette=medium_colors,
-                ax=ax,
-            )
-            for _, row in best_performances.iterrows():
-                time_format = format_time(row["time"])
-                ax.scatter(row["date"], row["time"], color="red", marker="s", s=100)
-                ax.text(
-                    row["date"],
-                    row["time"],
-                    f"{time_format}",
-                    ha="center",
-                    va="top",
-                    fontsize=10,
-                    fontweight="bold",
-                )
-            ax.set_xlabel("Année", fontweight="bold")
-            ax.set_ylabel("Performance", fontweight="bold")
-            ax.set_title(f"Evolution des performances sur {epreuve_choisie} pour {name}", fontweight="bold")
-            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_time(x)))
-            handles, labels = scatter_plot.get_legend_handles_labels()
-            best_handle = plt.Line2D(
-                [], [], marker="s", color="red", markersize=10, markerfacecolor="red", markeredgewidth=1.5
-            )
-            handles = [best_handle] + handles
-            labels = ["Best"] + labels
-            ax.legend(handles=handles, labels=labels, title="Best Per Year", loc="center left", bbox_to_anchor=(1, 0.5))
-            ax.grid(True)
-            plt.tight_layout()
-            st.pyplot(fig)
-            st.dataframe(
-                df_epreuve[["date", "perf", "time", "ville", "tour"]].sort_values("date"),
-                use_container_width=True,
-            )
+        df_plot["date"] = pd.to_datetime(df_plot["date"], errors="coerce")
+        df_plot["Annee"] = df_plot["date"].dt.year
+        df_plot = df_plot[
+            ~df_plot["perf"].str.contains("|".join(["DNS", "DNF", "AB", "DQ"]), na=False)
+        ]
+        df_plot["time"] = df_plot["perf"].apply(convert_time_to_seconds)
+        df_plot["LieuType"] = df_plot["epreuve"].str.contains("Piste Courte", na=False).map(
+            {True: "Indoor", False: "Outdoor"}
+        )
+        birth_year_local = get_birth_year_from_db(seq_local)
+        if birth_year_local is not None:
+            df_plot["age"] = df_plot["date"].dt.year - birth_year_local
         else:
-            st.info(f"Aucune performance sur {epreuve_choisie} trouvée pour cet athlète.")
+            df_plot["age"] = pd.NA
+        df_plot["Source"] = "World Athletics" if str(seq_local).startswith("WA_") else "FFA"
+        df_plot = df_plot.dropna(subset=["date", "time"]).sort_values("date")
+
+        return df_plot
+
+    def apply_perf_mode(df_plot: pd.DataFrame, mode: str) -> pd.DataFrame:
+        if df_plot.empty:
+            return df_plot
+
+        out = df_plot.copy()
+        if mode == "all":
+            return out.sort_values("date")
+        if mode == "best_year":
+            idx = out.groupby("Annee")["time"].idxmin()
+            return out.loc[idx].sort_values("Annee")
+        if mode == "best_age":
+            out = out.dropna(subset=["age"]).copy()
+            if out.empty:
+                return out
+            idx = out.groupby("age")["time"].idxmin()
+            return out.loc[idx].sort_values("age")
+        return out
+
+    def add_perf_trace_variant(
+        fig_obj: go.Figure,
+        df_plot: pd.DataFrame,
+        athlete_name: str,
+        color: str,
+        graph_mode: str,
+        x_col: str,
+        visible: bool,
+    ):
+        draw_mode = "markers" if graph_mode == "Nuage de points" else "lines+markers"
+        df_variant = df_plot.dropna(subset=[x_col]).copy()
+
+        fig_obj.add_trace(
+            go.Scatter(
+                x=df_variant[x_col],
+                y=df_variant["time"],
+                mode=draw_mode,
+                name=athlete_name,
+                marker={"size": 8, "color": color},
+                line={"width": 2, "color": color},
+                visible=visible,
+                customdata=df_variant[["perf", "ville", "age", "LieuType", "date", "Source"]],
+                hovertemplate=(
+                    "Athlète: " + athlete_name + "<br>"
+                    + "Perf: %{customdata[0]}<br>"
+                    + "Date: %{customdata[4]|%Y-%m-%d}<br>"
+                    + "Lieu: %{customdata[1]}<br>"
+                    + "Âge: %{customdata[2]}<br>"
+                    + "Type: %{customdata[3]}<br>"
+                    + "Source: %{customdata[5]}<extra></extra>"
+                ),
+            )
+        )
+
+    df_primary_plot = prepare_plot_df(df, selected["seq"])
+
+    if df_primary_plot.empty:
+        st.info(f"Aucune performance sur {epreuve_choisie} trouvée pour cet athlète.")
     else:
-        st.info("Aucune donnée trouvée pour cet athlète.")
+        athlete_series = [(selected["name"], "#1f77b4", df_primary_plot)]
+        table_frames = [df_primary_plot.assign(athlete=selected["name"]) ]
+
+        if compare_enabled and selected_compare:
+            if selected_compare["seq"] == selected["seq"]:
+                st.warning("Le 2e athlète est identique au 1er. Sélectionnez un autre profil pour comparer.")
+            else:
+                df_compare = load_or_scrape_results(selected_compare, show_loaded_message=False)
+                df_compare_plot = prepare_plot_df(df_compare, selected_compare["seq"])
+                if df_compare_plot.empty:
+                    st.warning(
+                        f"Aucune performance sur {epreuve_choisie} pour {selected_compare['name']}."
+                    )
+                else:
+                    athlete_series.append((selected_compare["name"], "#d62728", df_compare_plot))
+                    table_frames.append(df_compare_plot.assign(athlete=selected_compare["name"]))
+
+        axis_map = {"Date": ("date", "Date"), "Âge": ("age", "Âge"), "Année": ("Annee", "Année")}
+        perf_map = {"Toutes": ("all", "Toutes"), "Best année": ("best_year", "Best année"), "Best âge": ("best_age", "Best âge")}
+
+        selected_x_col, selected_x_label = axis_map[axis_mode_label]
+        selected_perf_mode, selected_perf_label = perf_map[perf_mode_label]
+
+        fig = go.Figure()
+        for athlete_name, color, athlete_df in athlete_series:
+            df_mode = apply_perf_mode(athlete_df, selected_perf_mode)
+            add_perf_trace_variant(
+                fig,
+                df_mode,
+                athlete_name,
+                color,
+                chart_type,
+                selected_x_col,
+                True,
+            )
+
+        fig.update_layout(
+            title=f"Évolution des performances - {epreuve_choisie} ({selected_perf_label})",
+            xaxis_title=selected_x_label,
+            yaxis_title="Temps (secondes)",
+            template="plotly_white",
+            hovermode="closest",
+            legend_title="Athlète",
+            height=chart_height,
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        df_table = pd.concat(table_frames, ignore_index=True).sort_values("date")
+        st.dataframe(
+            df_table[["athlete", "date", "perf", "time", "ville", "tour", "epreuve"]],
+            use_container_width=True,
+        )
