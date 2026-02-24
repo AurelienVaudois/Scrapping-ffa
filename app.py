@@ -5,6 +5,8 @@ import pandas as pd
 from sqlalchemy import create_engine
 import os
 import math
+import uuid
+from time import perf_counter
 import plotly.graph_objects as go
 from src.utils.http_utils import (
     search_athletes,                                        # FFA autocomplete (legacy)
@@ -22,6 +24,7 @@ from src.utils.athlete_utils import (
 )
 from src.utils.file_utils import convert_time_to_seconds
 from src.utils.ffa_fast import get_all_results_fast as get_all_athlete_results
+from src.utils.monitoring import ensure_monitoring_tables, init_sentry, track_event, track_timing
 
 # -----------------------------------------------------------------------------
 # DB connexion ----------------------------------------------------------------
@@ -37,6 +40,15 @@ except Exception:
     WA_API_URL = os.getenv("WA_API_URL")
     WA_API_KEY = os.getenv("WA_API_KEY")
 engine = create_engine(db_url)
+
+
+@st.cache_resource(show_spinner=False)
+def init_monitoring() -> bool:
+    ensure_monitoring_tables(engine)
+    return init_sentry()
+
+
+sentry_enabled = init_monitoring()
 # ----------------------------------------------------------------------------- 
 # UI settings -----------------------------------------------------------------
 # -----------------------------------------------------------------------------
@@ -79,6 +91,20 @@ if "athlete_options_compare" not in st.session_state:
     st.session_state["athlete_options_compare"] = []
 if "selected_athlete_compare" not in st.session_state:
     st.session_state["selected_athlete_compare"] = None
+if "monitoring_session_id" not in st.session_state:
+    st.session_state["monitoring_session_id"] = str(uuid.uuid4())
+if "monitoring_session_tracked" not in st.session_state:
+    st.session_state["monitoring_session_tracked"] = False
+
+monitoring_session_id = st.session_state["monitoring_session_id"]
+if not st.session_state["monitoring_session_tracked"]:
+    track_event(
+        engine,
+        event_type="session_start",
+        session_id=monitoring_session_id,
+        metadata={"sentry_enabled": sentry_enabled},
+    )
+    st.session_state["monitoring_session_tracked"] = True
 
 
 def detect_mobile_device() -> bool:
@@ -127,14 +153,34 @@ include_wa_search = control_panel.toggle(
 # -----------------------------------------------------------------------------
 if search_term and len(search_term) >= 3 and st.session_state.get("last_search_term") != search_term:
     with st.spinner("Recherche des athlètes…"):
-        if include_wa_search:
-            athletes = search_wa_athletes(search_term)
-            print(f"Mode WA direct activé: {len(athletes)} résultat(s)")
-        else:
-            # Recherche FFA
-            athletes = search_athletes_smart(search_term)
-            if not athletes:
-                athletes = search_athletes(search_term)
+        search_started = perf_counter()
+        search_source = "WA" if include_wa_search else "FFA"
+        search_status = "ok"
+        try:
+            if include_wa_search:
+                athletes = search_wa_athletes(search_term)
+                print(f"Mode WA direct activé: {len(athletes)} résultat(s)")
+            else:
+                # Recherche FFA
+                athletes = search_athletes_smart(search_term)
+                if not athletes:
+                    athletes = search_athletes(search_term)
+        except Exception:
+            search_status = "error"
+            raise
+        finally:
+            search_elapsed = int((perf_counter() - search_started) * 1000)
+            track_event(
+                engine,
+                event_type="athlete_search",
+                session_id=monitoring_session_id,
+                status=search_status,
+                duration_ms=search_elapsed,
+                metadata={
+                    "source_mode": search_source,
+                    "query_len": len(search_term),
+                },
+            )
 
         st.session_state["athletes"] = athletes
         st.session_state["athlete_options"] = [
@@ -190,41 +236,118 @@ if selected:
         club_local = athlete.get("club", "")
         sex_local = athlete.get("sex", "")
 
-        df_local = get_results_from_db(seq_local)
+        with track_timing(
+            engine,
+            event_type="db_results_lookup",
+            session_id=monitoring_session_id,
+            metadata={"seq": seq_local},
+        ):
+            df_local = get_results_from_db(seq_local)
+
+        track_event(
+            engine,
+            event_type="db_results_lookup_count",
+            session_id=monitoring_session_id,
+            metadata={"seq": seq_local, "rows": int(len(df_local))},
+        )
+
         if df_local.empty:
             is_wa_athlete = athlete.get("source") == "WA" or str(seq_local).startswith("WA_")
 
             if is_wa_athlete:
                 with st.spinner(f"Scraping World Athletics pour {name_local}…"):
-                    df_local = fetch_and_store_wa_results(name_local, engine)
+                    with track_timing(
+                        engine,
+                        event_type="wa_scrape",
+                        session_id=monitoring_session_id,
+                        metadata={"name": name_local},
+                    ):
+                        df_local = fetch_and_store_wa_results(name_local, engine)
                     if not df_local.empty:
                         st.cache_data.clear()
                         st.success(f"Données WA ajoutées à la base pour {name_local}.")
+                        track_event(
+                            engine,
+                            event_type="wa_scrape_result",
+                            session_id=monitoring_session_id,
+                            metadata={"name": name_local, "rows": int(len(df_local))},
+                        )
                     else:
                         st.warning(f"Aucune donnée trouvée sur World Athletics pour {name_local}.")
+                        track_event(
+                            engine,
+                            event_type="wa_scrape_result",
+                            session_id=monitoring_session_id,
+                            status="empty",
+                            metadata={"name": name_local},
+                        )
             else:
                 with st.spinner(f"Scraping FFA pour {name_local}…"):
                     try:
-                        df_local = get_all_athlete_results(seq_local)
+                        with track_timing(
+                            engine,
+                            event_type="ffa_scrape",
+                            session_id=monitoring_session_id,
+                            metadata={"seq": seq_local, "name": name_local},
+                        ):
+                            df_local = get_all_athlete_results(seq_local)
                         if not df_local.empty:
                             df_local = clean_and_prepare_results_df(df_local, seq_local)
                             save_athlete_info(seq_local, name_local, club_local, sex_local, engine)
                             save_results_to_postgres(df_local, seq_local, engine)
                             st.cache_data.clear()
                             st.success(f"Données FFA ajoutées à la base pour {name_local}.")
+                            track_event(
+                                engine,
+                                event_type="ffa_scrape_result",
+                                session_id=monitoring_session_id,
+                                metadata={"seq": seq_local, "rows": int(len(df_local))},
+                            )
                         else:
                             st.info(f"Aucune donnée FFA pour {name_local}, tentative World Athletics…")
-                            df_local = fetch_and_store_wa_results(name_local, engine)
+                            with track_timing(
+                                engine,
+                                event_type="wa_scrape_fallback",
+                                session_id=monitoring_session_id,
+                                metadata={"seq": seq_local, "name": name_local},
+                            ):
+                                df_local = fetch_and_store_wa_results(name_local, engine)
                             if not df_local.empty:
                                 st.cache_data.clear()
                                 st.success(f"Données WA ajoutées à la base pour {name_local}.")
+                                track_event(
+                                    engine,
+                                    event_type="wa_scrape_result",
+                                    session_id=monitoring_session_id,
+                                    metadata={"name": name_local, "rows": int(len(df_local)), "fallback": True},
+                                )
                             else:
                                 st.warning(f"Aucune donnée trouvée sur FFA ni WA pour {name_local}.")
+                                track_event(
+                                    engine,
+                                    event_type="wa_scrape_result",
+                                    session_id=monitoring_session_id,
+                                    status="empty",
+                                    metadata={"name": name_local, "fallback": True},
+                                )
                     except Exception as e:
                         st.error(f"Erreur scraping FFA pour {name_local} : {e}")
+                        track_event(
+                            engine,
+                            event_type="ffa_scrape_exception",
+                            session_id=monitoring_session_id,
+                            status="error",
+                            metadata={"seq": seq_local, "name": name_local, "message": str(e)[:300]},
+                        )
         else:
             if show_loaded_message:
                 st.success(f"Données chargées depuis la base pour {name_local}.")
+            track_event(
+                engine,
+                event_type="cache_hit_results",
+                session_id=monitoring_session_id,
+                metadata={"seq": seq_local, "rows": int(len(df_local))},
+            )
 
         return df_local
 
@@ -501,7 +624,13 @@ if selected:
         ticktext = [format_axis_time(val, mode) for val in tickvals]
         return tickvals, ticktext
 
-    df_primary_plot = prepare_plot_df(df, selected["seq"])
+    with track_timing(
+        engine,
+        event_type="prepare_plot_df",
+        session_id=monitoring_session_id,
+        metadata={"seq": selected["seq"], "epreuve": epreuve_choisie},
+    ):
+        df_primary_plot = prepare_plot_df(df, selected["seq"])
 
     if df_primary_plot.empty:
         st.info(f"Aucune performance sur {epreuve_choisie} trouvée pour cet athlète.")
@@ -586,10 +715,117 @@ if selected:
             height=chart_height,
         )
 
+        render_started = perf_counter()
         st.plotly_chart(fig, use_container_width=True)
+        track_event(
+            engine,
+            event_type="plotly_chart_call",
+            session_id=monitoring_session_id,
+            duration_ms=int((perf_counter() - render_started) * 1000),
+            metadata={"series_count": len(athlete_series), "epreuve": epreuve_choisie},
+        )
 
         df_table = pd.concat(table_frames, ignore_index=True).sort_values("date")
         st.dataframe(
             df_table[["athlete", "date", "perf", "time", "ville", "tour", "epreuve"]],
             use_container_width=True,
         )
+
+        with st.expander("🩺 Monitoring (7 derniers jours)", expanded=False):
+            try:
+                query_summary = """
+                    SELECT
+                        COUNT(*)::int AS total_events,
+                        COUNT(DISTINCT session_id)::int AS active_sessions,
+                        COUNT(*) FILTER (WHERE event_type = 'athlete_search')::int AS searches,
+                        ROUND(AVG(duration_ms) FILTER (WHERE event_type = 'athlete_search' AND status = 'ok'))::int AS avg_search_ms,
+                        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)
+                            FILTER (WHERE event_type = 'athlete_search' AND status = 'ok'))::int AS p95_search_ms,
+                        ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'error') / NULLIF(COUNT(*), 0), 2) AS error_rate_pct
+                    FROM app_monitoring_events
+                    WHERE created_at >= NOW() - INTERVAL '7 days'
+                """
+                monitoring_summary = pd.read_sql_query(query_summary, engine)
+                if not monitoring_summary.empty:
+                    summary_row = monitoring_summary.iloc[0]
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    col1.metric("Sessions actives", int(summary_row.get("active_sessions") or 0))
+                    col2.metric("Recherches", int(summary_row.get("searches") or 0))
+                    col3.metric("Latence moyenne", f"{int(summary_row.get('avg_search_ms') or 0)} ms")
+                    col4.metric("p95 recherche", f"{int(summary_row.get('p95_search_ms') or 0)} ms")
+                    col5.metric("Taux erreur", f"{float(summary_row.get('error_rate_pct') or 0):.2f}%")
+
+                query_capacity = """
+                    SELECT
+                        DATE_TRUNC('hour', created_at) AS hour_slot,
+                        COUNT(*) FILTER (WHERE event_type = 'athlete_search')::int AS searches,
+                        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)
+                            FILTER (WHERE event_type = 'athlete_search' AND status = 'ok'))::int AS p95_search_ms,
+                        COUNT(*) FILTER (WHERE status = 'error')::int AS errors
+                    FROM app_monitoring_events
+                    WHERE created_at >= NOW() - INTERVAL '48 hours'
+                    GROUP BY 1
+                    ORDER BY 1 DESC
+                    LIMIT 48
+                """
+                monitoring_capacity = pd.read_sql_query(query_capacity, engine)
+
+                query_daily = """
+                    SELECT
+                        DATE_TRUNC('day', created_at)::date AS day_slot,
+                        COUNT(*) FILTER (WHERE event_type = 'athlete_search')::int AS searches,
+                        ROUND(AVG(duration_ms) FILTER (WHERE event_type = 'athlete_search' AND status = 'ok'))::int AS avg_search_ms,
+                        ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)
+                            FILTER (WHERE event_type = 'athlete_search' AND status = 'ok'))::int AS p95_search_ms,
+                        COUNT(*) FILTER (WHERE status = 'error')::int AS errors
+                    FROM app_monitoring_events
+                    WHERE created_at >= NOW() - INTERVAL '14 days'
+                    GROUP BY 1
+                    ORDER BY 1
+                """
+                monitoring_daily = pd.read_sql_query(query_daily, engine)
+
+                query_errors = """
+                    SELECT
+                        event_type,
+                        COUNT(*)::int AS errors
+                    FROM app_monitoring_events
+                    WHERE created_at >= NOW() - INTERVAL '7 days'
+                      AND status = 'error'
+                    GROUP BY 1
+                    ORDER BY 2 DESC
+                    LIMIT 10
+                """
+                monitoring_errors = pd.read_sql_query(query_errors, engine)
+
+                if not monitoring_daily.empty:
+                    st.markdown("**Tendance journalière (14 jours)**")
+                    daily_indexed = monitoring_daily.set_index("day_slot")
+                    st.line_chart(
+                        daily_indexed[["searches", "errors"]],
+                        use_container_width=True,
+                    )
+                    st.line_chart(
+                        daily_indexed[["avg_search_ms", "p95_search_ms"]],
+                        use_container_width=True,
+                    )
+
+                if not monitoring_capacity.empty:
+                    st.markdown("**Capacité horaire (48h)**")
+                    monitoring_capacity = monitoring_capacity.sort_values("hour_slot")
+                    st.line_chart(
+                        monitoring_capacity.set_index("hour_slot")[["searches", "errors"]],
+                        use_container_width=True,
+                    )
+                    st.line_chart(
+                        monitoring_capacity.set_index("hour_slot")[["p95_search_ms"]],
+                        use_container_width=True,
+                    )
+
+                with st.expander("Données brutes monitoring", expanded=False):
+                    st.dataframe(monitoring_summary, use_container_width=True)
+                    st.dataframe(monitoring_daily, use_container_width=True)
+                    st.dataframe(monitoring_capacity, use_container_width=True)
+                    st.dataframe(monitoring_errors, use_container_width=True)
+            except Exception as monitor_exc:
+                st.info(f"Monitoring indisponible: {monitor_exc}")

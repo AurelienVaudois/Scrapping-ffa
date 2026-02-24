@@ -19,3 +19,5 @@ requests-cache
 selectolax
 asyncpg
 tqdm
+sentry-sdk
+locust

@@ -156,6 +156,27 @@ Notes:
 ## 🧪 Notebooks
 Les notebooks Jupyter d'exploration sont regroupés dans le dossier `exploration/` pour les tests de scraping, analyses et prototypage de visualisation.
 
+## 🩺 Monitoring & charge (Task 9)
+- Monitoring applicatif intégré (usage, vitesse, erreurs) avec stockage en base (`app_monitoring_events`).
+- Dashboard de suivi directement dans l'app Streamlit via l'expander **Monitoring (7 derniers jours)**.
+- Intégration Sentry optionnelle via `SENTRY_DSN`.
+- Protocole et SQL d'analyse: voir [MONITORING_TASK9.md](MONITORING_TASK9.md).
+
+### Test de charge rapide
+```bash
+locust -f load_tests/locustfile.py --host http://localhost:8501
+```
+
+Pour Streamlit Cloud:
+```bash
+locust -f load_tests/locustfile.py --host https://<your-app>.streamlit.app
+```
+
+Test par paliers automatique (exports CSV/HTML):
+```bash
+python load_tests/run_stages.py --host https://<your-app>.streamlit.app --users 5,20,50,75,100 --duration 10m --spawn-rate 5
+```
+
 ## 🧭 Expérience utilisateur (résumé)
 - **Sidebar structurée** : `Athlète` → `Comparaison` → `Analyse` → `Avancé`
 - **Comparaison progressive** : l'utilisateur commence avec 1 athlète puis ajoute le 2e uniquement si besoin
