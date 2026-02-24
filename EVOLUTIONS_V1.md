@@ -43,3 +43,11 @@ La version 1 offre une expérience plus intuitive, plus lisible, et plus flexibl
 	- sprint en secondes,
 	- demi-fond/fond en minutes:secondes,
 	- semi/marathon en heures:minutes.
+
+## Réalisation tâche 4 - Script de mise à jour DB
+- Mise en place d’un script d’update incrémental dédié via `update_athletes.py` (mode one-shot et mode boucle).
+- Traitement idempotent: re-scrape des résultats puis insertion des seules nouvelles lignes via déduplication en base.
+- Fiabilisation de `last_update`: mise à jour uniquement en cas de récupération techniquement réussie, pas en cas d’échec/retour vide.
+- Ajout d’un résumé de batch (total, succès, échecs, lignes insérées) pour faciliter le suivi opérationnel.
+- Correction WA: année de fin dynamique (année courante) pour ne pas bloquer à 2025.
+- Durcissement de l’exécution Windows avec `update_loop.bat` (activation venv, création auto du dossier logs, journalisation dans `logs/update.log`).

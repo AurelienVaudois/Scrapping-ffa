@@ -3,6 +3,7 @@ import pandas as pd
 from json.decoder import JSONDecodeError
 import concurrent.futures
 import time
+from datetime import datetime
 from tqdm.auto import tqdm
 import os
 from dotenv import load_dotenv
@@ -14,7 +15,7 @@ load_dotenv()
 WA_API_URL = os.getenv('WA_API_URL')
 WA_API_KEY = os.getenv('WA_API_KEY')
 
-def get_athlete_results_by_name(athlete_name, start_year=1960, end_year=2025, use_threading=True, max_workers=10):
+def get_athlete_results_by_name(athlete_name, start_year=1960, end_year=None, use_threading=True, max_workers=10):
     """
     Récupère tous les résultats de compétition d'un athlète en le recherchant par son nom.
     Version optimisée avec multithreading pour accélérer le scraping.
@@ -22,7 +23,7 @@ def get_athlete_results_by_name(athlete_name, start_year=1960, end_year=2025, us
     Args:
         athlete_name (str): Nom de l'athlète à rechercher
         start_year (int, optional): Année de début pour la recherche de résultats. Par défaut 1960.
-        end_year (int, optional): Année de fin pour la recherche de résultats. Par défaut 2025.
+        end_year (int, optional): Année de fin pour la recherche de résultats. Par défaut année courante.
         use_threading (bool, optional): Utiliser le multithreading pour accélérer les requêtes. Par défaut True.
         max_workers (int, optional): Nombre maximum de workers pour le multithreading. Par défaut 10.
         
@@ -32,6 +33,8 @@ def get_athlete_results_by_name(athlete_name, start_year=1960, end_year=2025, us
     """
     # Mesurer le temps d'exécution
     start_time = time.time()
+    if end_year is None:
+        end_year = datetime.now().year
     
     # Recherche de l'ID de l'athlète par son nom
     athlete_info = search_athletes_by_name(athlete_name)
@@ -220,7 +223,7 @@ def fetch_year_data(athlete_id, year):
     except Exception as e:
         return year, None, []
 
-def get_athlete_competition_results(athlete_id, start_year=1990, end_year=2025, use_threading=True, max_workers=10):
+def get_athlete_competition_results(athlete_id, start_year=1990, end_year=None, use_threading=True, max_workers=10):
     """
     Récupère tous les résultats de compétition d'un athlète par son ID.
     Version optimisée avec support du multithreading.
@@ -228,13 +231,16 @@ def get_athlete_competition_results(athlete_id, start_year=1990, end_year=2025, 
     Args:
         athlete_id (int): ID de l'athlète
         start_year (int, optional): Année de début pour la recherche de résultats. Par défaut 1990.
-        end_year (int, optional): Année de fin pour la recherche de résultats. Par défaut 2025.
+        end_year (int, optional): Année de fin pour la recherche de résultats. Par défaut année courante.
         use_threading (bool, optional): Utiliser le multithreading pour accélérer les requêtes
         max_workers (int, optional): Nombre maximum de workers pour le multithreading
         
     Returns:
         pd.DataFrame: DataFrame contenant tous les résultats de l'athlète
     """
+    if end_year is None:
+        end_year = datetime.now().year
+
     all_years = list(range(start_year, end_year + 1))
     df_list = []
     all_active_years = set()

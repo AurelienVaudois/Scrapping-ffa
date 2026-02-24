@@ -80,6 +80,79 @@ streamlit run app.py
 ```
 L'application sera accessible sur `http://localhost:8501`.
 
+## 🔄 Mise à jour incrémentale de la base
+
+Le script [update_athletes.py](update_athletes.py) met à jour les performances en mode idempotent:
+- il re-scrape les résultats des athlètes à rafraîchir,
+- il n'insère que les nouvelles lignes (déduplication SQL via contrainte unique),
+- il met à jour `last_update` uniquement si la récupération est techniquement réussie.
+
+### Lancement manuel
+```bash
+python update_athletes.py --batch 10
+```
+
+### Lancement en boucle (période de compétition)
+```bash
+python update_athletes.py --loop --delay 600 --batch 10
+```
+
+Paramètres:
+- `--batch`: nombre d'athlètes traités par batch
+- `--delay`: pause entre deux batches en secondes (en mode `--loop`)
+
+### Lancement Windows prêt scheduler
+Le script [update_loop.bat](update_loop.bat) :
+- active l'environnement virtuel,
+- crée automatiquement le dossier `logs` si nécessaire,
+- écrit les traces dans [logs/update.log](logs/update.log).
+
+Tu peux le brancher dans le Planificateur de tâches Windows pour une exécution quotidienne.
+Important: le PC doit être allumé (ou réveillable) au moment prévu.
+
+### Exécution depuis téléphone
+Possible de manière indirecte (bureau à distance vers ton PC), puis lecture du log dans [logs/update.log](logs/update.log).
+
+### Presets Task Scheduler (Windows)
+
+Commande utilisée dans les presets:
+
+```powershell
+cmd /c "C:\Users\Lucas\Documents\DATA_SCIENCE\Scrapping-ffa\update_loop.bat"
+```
+
+Preset `Normal` (1 fois / jour à 06:00):
+
+```powershell
+schtasks /Create /TN "ScrappingFFA-Update-Normal" /TR "cmd /c \"C:\Users\Lucas\Documents\DATA_SCIENCE\Scrapping-ffa\update_loop.bat\"" /SC DAILY /ST 06:00 /F
+```
+
+Preset `Intense` (2 fois / jour: 07:00 et 19:00):
+
+```powershell
+schtasks /Create /TN "ScrappingFFA-Update-Intense-AM" /TR "cmd /c \"C:\Users\Lucas\Documents\DATA_SCIENCE\Scrapping-ffa\update_loop.bat\"" /SC DAILY /ST 07:00 /F
+schtasks /Create /TN "ScrappingFFA-Update-Intense-PM" /TR "cmd /c \"C:\Users\Lucas\Documents\DATA_SCIENCE\Scrapping-ffa\update_loop.bat\"" /SC DAILY /ST 19:00 /F
+```
+
+Commandes utiles:
+
+```powershell
+# Lister les tâches
+schtasks /Query /TN "ScrappingFFA-Update-*"
+
+# Lancer une tâche immédiatement
+schtasks /Run /TN "ScrappingFFA-Update-Normal"
+
+# Supprimer un preset
+schtasks /Delete /TN "ScrappingFFA-Update-Normal" /F
+schtasks /Delete /TN "ScrappingFFA-Update-Intense-AM" /F
+schtasks /Delete /TN "ScrappingFFA-Update-Intense-PM" /F
+```
+
+Notes:
+- Le PC doit être allumé (ou réveillable) au moment d'exécution.
+- Les traces restent dans [logs/update.log](logs/update.log).
+
 ## 🧪 Notebooks
 Les notebooks Jupyter d'exploration sont regroupés dans le dossier `exploration/` pour les tests de scraping, analyses et prototypage de visualisation.
 

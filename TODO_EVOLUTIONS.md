@@ -15,7 +15,7 @@
 ## Backlog (non classé par importance)
 | # | Tâche | MoSCoW | Complexité (T-Shirt) | Notes |
 |---|---|---|---|---|
-| 4 | Créer un script de mise à jour de la base avec les nouveaux résultats | Should | S |  |
+| 4 | Créer un script de mise à jour de la base avec les nouveaux résultats | Should | S | ✅ Fait - script incrémental idempotent + loop + logs |
 | 10 | N’afficher le volet déroulant que pour les épreuves avec performances disponibles | Should | M | ✅ Fait |
 | 1 | Vérifier l’affichage sur téléphone et créer une version spécifique si nécessaire | Should | L | 🔄 En cours |
 | 2 | Améliorer le scraping FFA (nom + prénom): éviter le fallback WA trop tôt pour les profils licenciés en France | Should | L | ✅ Fait |

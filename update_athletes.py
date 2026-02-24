@@ -21,7 +21,6 @@ import logging
 import argparse
 from typing import Dict, List
 
-import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from dotenv import load_dotenv
@@ -40,7 +39,7 @@ load_dotenv()
 DB_URL        = os.getenv("DB_URL")
 DEFAULT_BATCH = int(os.getenv("BATCH_SIZE", 10))
 MAX_AGE_DAYS  = int(os.getenv("MAX_AGE_DAYS", 1))
-DEFAULT_DELAY = int(os.getenv("DELAY_SECONDS", 60))  # 10 min
+DEFAULT_DELAY = int(os.getenv("DELAY_SECONDS", 600))  # 10 min
 
 if not DB_URL:
     raise SystemExit("❌  DB_URL manquant dans l’environnement")
@@ -86,49 +85,40 @@ def refresh_ffa(ath: Dict, engine: Engine):
     seq, name, club, sex = ath["seq"], ath["name"], ath["club"], ath["sex"]
     df = get_all_results_fast(seq)
     if df.empty:
-        logging.info("   ↳ aucune donnée FFA trouvée pour %s", seq)
-        _touch(seq, name, club, sex, engine)
-        return
+        logging.warning("   ↳ aucune donnée FFA reçue pour %s (last_update non modifié)", seq)
+        return False, 0
 
     df = clean_and_prepare_results_df(df, seq)
-    with engine.begin() as conn:
-        last_date = conn.scalar(text("SELECT MAX(date) FROM results WHERE seq = :s"), {"s": seq})
-    if last_date is not None:
-        df = df[df["date"] > pd.Timestamp(last_date)]
-
     if df.empty:
-        logging.info("   ↳ rien de nouveau pour %s", seq)
-        _touch(seq, name, club, sex, engine)
-        return
+        logging.warning("   ↳ données FFA invalides/vides après nettoyage pour %s", seq)
+        return False, 0
 
     ins = save_results_to_postgres(df, seq, engine)
-    logging.info("   ↳ %d nouvelles lignes insérées", ins)
+    if ins == 0:
+        logging.info("   ↳ aucune nouvelle ligne (idempotent)")
+    else:
+        logging.info("   ↳ %d nouvelles lignes insérées", ins)
     _touch(seq, name, club, sex, engine)
+    return True, ins
 
 
 def refresh_wa(ath: Dict, engine: Engine):
-    """Scrape WA puis insère seulement les nouvelles performances."""
+    """Scrape WA puis insère les performances (déduplication gérée en DB)."""
     seq, name, club, sex = ath["seq"], ath["name"], ath["club"], ath["sex"]
 
     df = fetch_wa_results_df(name)  # DataFrame déjà nettoyé, pas d’insert
     if df.empty:
-        logging.info("   ↳ aucune donnée WA pour %s", name)
-        _touch(seq, name, club, sex, engine)
-        return
+        logging.warning("   ↳ aucune donnée WA reçue pour %s (last_update non modifié)", name)
+        return False, 0
 
-    # filtre incrémental
-    with engine.begin() as conn:
-        last = conn.scalar(text("SELECT MAX(date) FROM results WHERE seq = :s"), {"s": seq})
-    if last is not None:
-        df = df[df["date"] > pd.Timestamp(last)]
-
-    if df.empty:
-        logging.info("   ↳ rien de nouveau pour %s", name)
+    inserted = save_results_to_postgres(df, seq, engine)
+    if inserted == 0:
+        logging.info("   ↳ aucune nouvelle ligne (idempotent)")
     else:
-        inserted = save_results_to_postgres(df, seq, engine)
         logging.info("   ↳ %d nouvelles lignes insérées", inserted)
 
     _touch(seq, name, club, sex, engine)
+    return True, inserted
 
 
 def process_batch(batch_size: int) -> int:
@@ -139,16 +129,31 @@ def process_batch(batch_size: int) -> int:
         return 0
 
     logging.info("➡️  %d athlète(s) à mettre à jour (batch=%d, seuil=%dj)", len(stale), batch_size, MAX_AGE_DAYS)
+    success = 0
+    failed = 0
+    inserted_total = 0
     for ath in stale:
         logging.info("• Rafraîchissement %s (%s)", ath["name"], ath["seq"])
         try:
             if str(ath["seq"]).startswith("WA_"):
-                refresh_wa(ath, engine)
+                ok, inserted = refresh_wa(ath, engine)
             else:
-                refresh_ffa(ath, engine)
+                ok, inserted = refresh_ffa(ath, engine)
+            if ok:
+                success += 1
+                inserted_total += inserted
+            else:
+                failed += 1
         except Exception:
+            failed += 1
             logging.exception("   ↳ Erreur sur %s", ath["seq"])
-    logging.info("🏁 Batch terminé.")
+    logging.info(
+        "🏁 Batch terminé. total=%d, success=%d, failed=%d, inserted=%d",
+        len(stale),
+        success,
+        failed,
+        inserted_total,
+    )
     return len(stale)
 
 # ─── main ────────────────────────────────────────────────────────────────────
