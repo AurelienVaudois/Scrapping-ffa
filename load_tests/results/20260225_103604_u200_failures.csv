@@ -1,0 +1,4 @@
+Method,Name,Error,Occurrences
+GET,search_page,HTTPError('500 Server Error: Internal Server Error for url: search_page'),2
+GET,st_health,HTTPError('500 Server Error: Internal Server Error for url: st_health'),2
+GET,home,HTTPError('500 Server Error: Internal Server Error for url: home'),2
