@@ -15,9 +15,10 @@ Notes
 """
 from __future__ import annotations
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 import pandas as pd
 from sqlalchemy.engine import Engine
+from datetime import datetime
 
 from src.utils.scraping_wa import (
     search_athletes_by_name as _wa_search,
@@ -35,6 +36,17 @@ def search_wa_athletes(search_term: str) -> List[Dict[str, Any]]:
         return []
 
     df = _wa_search(search_term)
+    if (not isinstance(df, pd.DataFrame)) or (isinstance(df, pd.DataFrame) and df.empty):
+        tokens = [t.strip() for t in search_term.split(" ") if len(t.strip()) >= 3]
+        fallback_queries = []
+        if tokens:
+            fallback_queries.append(tokens[-1])
+            fallback_queries.append(tokens[0])
+        for fallback_query in fallback_queries:
+            df = _wa_search(fallback_query)
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                break
+
     if not isinstance(df, pd.DataFrame) or df.empty:
         return []
 
@@ -165,10 +177,59 @@ def _prepare_results_df(raw: pd.DataFrame, seq: str) -> pd.DataFrame:
 from src.utils.athlete_utils import save_athlete_info, save_results_to_postgres
 from src.utils.scraping_wa import search_athletes_by_name, get_athlete_results_by_name
 
-def fetch_and_store_wa_results(name_query: str, engine):
+
+def _pick_best_wa_candidate(df_search: pd.DataFrame, name_query: str, athlete_hint: Optional[dict]) -> pd.Series:
+    if df_search.empty:
+        return pd.Series(dtype="object")
+
+    given_series = df_search["givenName"] if "givenName" in df_search.columns else pd.Series([""] * len(df_search))
+    family_series = df_search["familyName"] if "familyName" in df_search.columns else pd.Series([""] * len(df_search))
+    country_series = df_search["country"] if "country" in df_search.columns else pd.Series([""] * len(df_search))
+    full_names = (given_series.fillna("") + " " + family_series.fillna(""))
+
+    if athlete_hint:
+        hint_seq = str(athlete_hint.get("seq", "")).strip()
+        hint_name = str(athlete_hint.get("name", "")).strip().lower()
+        hint_country = str(athlete_hint.get("club", "")).strip().lower()
+
+        if hint_seq.startswith("WA_"):
+            try:
+                hint_aa_id = int(hint_seq.replace("WA_", ""))
+                exact_id = df_search[df_search["aaAthleteId"].astype(str) == str(hint_aa_id)]
+                if not exact_id.empty:
+                    return exact_id.iloc[0]
+            except Exception:
+                pass
+
+        if hint_name:
+            exact_name = df_search[full_names.str.strip().str.lower() == hint_name]
+            if not exact_name.empty:
+                if hint_country:
+                    country_match = exact_name[country_series.loc[exact_name.index].fillna("").str.strip().str.lower() == hint_country]
+                    if not country_match.empty:
+                        return country_match.iloc[0]
+                return exact_name.iloc[0]
+
+    query_norm = name_query.strip().lower()
+    exact_query = df_search[full_names.str.strip().str.lower() == query_norm]
+    if not exact_query.empty:
+        return exact_query.iloc[0]
+
+    return df_search.iloc[0]
+
+
+def fetch_and_store_wa_results(
+    name_query: str,
+    engine,
+    athlete_hint: Optional[dict] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
+):
     """
     Cherche un athlète sur WA, récupère ses résultats et sauvegarde tout en base.
     """
+    if progress_callback:
+        progress_callback("Recherche du profil World Athletics…")
+
     # 1. Recherche de l'athlète
     df_search = search_athletes_by_name(name_query)
     
@@ -176,8 +237,9 @@ def fetch_and_store_wa_results(name_query: str, engine):
         print(f"Aucun athlète trouvé sur WA pour : {name_query}")
         return pd.DataFrame() # Retourne un DF vide au lieu de None pour éviter le crash
 
-    # On prend le premier résultat
-    athlete = df_search.iloc[0]
+    athlete = _pick_best_wa_candidate(df_search, name_query, athlete_hint)
+    if athlete.empty:
+        return pd.DataFrame()
     
     # 1. L'ID s'appelle 'aaAthleteId' et on ajoute le préfixe WA_
     wa_id = f"WA_{athlete['aaAthleteId']}"
@@ -215,6 +277,9 @@ def fetch_and_store_wa_results(name_query: str, engine):
     print(f"Sauvegarde infos athlète WA : {full_name} ({birth_date_raw})")
 
     # 2. Sauvegarde des infos athlète
+    if progress_callback:
+        progress_callback("Sauvegarde des informations athlète…")
+
     save_athlete_info(
         seq=wa_id,
         name=full_name,
@@ -226,12 +291,29 @@ def fetch_and_store_wa_results(name_query: str, engine):
     )
 
     # 3. Récupération et sauvegarde des résultats
-    raw_df = get_athlete_results_by_name(full_name)
+    current_year = datetime.now().year
+    start_year = max(1990, current_year - 20)
+    if birth_year is not None:
+        start_year = max(1990, birth_year + 13)
+
+    if progress_callback:
+        progress_callback("Scraping des performances WA…")
+
+    raw_df = get_athlete_results_by_name(
+        full_name,
+        start_year=start_year,
+        end_year=current_year,
+        use_threading=True,
+        max_workers=6,
+        max_total_seconds=18,
+    )
     
     # Standardisation
     df_clean = _prepare_results_df(raw_df, wa_id)
 
     if not df_clean.empty:
+        if progress_callback:
+            progress_callback("Insertion des résultats en base…")
         save_results_to_postgres(df_clean, wa_id, engine)
     
     return df_clean # <--- C'est ce return qui manquait !

@@ -5,6 +5,7 @@ import pandas as pd
 from sqlalchemy import create_engine
 import os
 import math
+import time
 import plotly.graph_objects as go
 from src.utils.http_utils import (
     search_athletes,                                        # FFA autocomplete (legacy)
@@ -79,6 +80,18 @@ if "athlete_options_compare" not in st.session_state:
     st.session_state["athlete_options_compare"] = []
 if "selected_athlete_compare" not in st.session_state:
     st.session_state["selected_athlete_compare"] = None
+if "search_requested_main" not in st.session_state:
+    st.session_state["search_requested_main"] = False
+if "search_requested_compare" not in st.session_state:
+    st.session_state["search_requested_compare"] = False
+
+
+def request_main_search():
+    st.session_state["search_requested_main"] = True
+
+
+def request_compare_search():
+    st.session_state["search_requested_compare"] = True
 
 
 def detect_mobile_device() -> bool:
@@ -114,21 +127,83 @@ def merge_athlete_candidates(*groups: list[dict]) -> list[dict]:
             merged.append(athlete)
     return merged
 
-search_term = control_panel.text_input("Nom de l'athlète à rechercher", key="search_term")
+
+@st.cache_data(show_spinner=False)
+def search_athletes_from_db(term: str, wa_only: bool = False, limit: int = 10) -> list[dict]:
+    term_norm = str(term or "").strip().lower()
+    if len(term_norm) < 3:
+        return []
+
+    where_wa = "AND seq LIKE 'WA_%'" if wa_only else ""
+    query = f"""
+        SELECT seq, name, club, sex
+        FROM athletes
+        WHERE LOWER(name) LIKE %(term)s
+        {where_wa}
+        ORDER BY name ASC
+        LIMIT %(limit)s
+    """
+
+    try:
+        df_db = pd.read_sql_query(
+            query,
+            engine,
+            params={"term": f"%{term_norm}%", "limit": int(limit)},
+        )
+    except Exception:
+        return []
+
+    if df_db.empty:
+        return []
+
+    out = []
+    for _, row in df_db.iterrows():
+        seq_value = str(row.get("seq", ""))
+        source = "WA" if seq_value.startswith("WA_") else "FFA"
+        out.append(
+            {
+                "hactseq": None,
+                "name": str(row.get("name", "")).strip(),
+                "club": str(row.get("club", "")).strip(),
+                "sex": str(row.get("sex", "")).strip(),
+                "seq": seq_value,
+                "source": source,
+            }
+        )
+    return out
+
+search_term = control_panel.text_input(
+    "Nom de l'athlète à rechercher",
+    key="search_term",
+    on_change=request_main_search,
+)
+search_clicked = control_panel.button("🔍 Rechercher l'athlète", key="search_main_button")
+
 include_wa_search = control_panel.toggle(
     "Athlète principal: mode WA uniquement",
     value=False,
     help="Activé: recherche World Athletics uniquement (FFA exclu). Désactivé: recherche FFA uniquement.",
     key="include_wa_search",
 )
+control_panel.caption("Étape 1: tapez un nom puis appuyez sur Entrée ou sur Rechercher.")
 
 # -----------------------------------------------------------------------------
 # 1. Recherche d'athlètes ------------------------------------------------------
 # -----------------------------------------------------------------------------
-if search_term and len(search_term) >= 3 and st.session_state.get("last_search_term") != search_term:
+should_search_main = False
+search_requested_main = st.session_state.get("search_requested_main", False)
+if search_term and len(search_term) >= 3:
+    should_search_main = search_clicked or search_requested_main
+elif search_clicked or search_requested_main:
+    st.info("Entrez au moins 3 caractères pour lancer la recherche.")
+    st.session_state["search_requested_main"] = False
+
+if should_search_main:
     with st.spinner("Recherche des athlètes…"):
         if include_wa_search:
             athletes = search_wa_athletes(search_term)
+            if not athletes:
+                athletes = search_athletes_from_db(search_term, wa_only=True)
             print(f"Mode WA direct activé: {len(athletes)} résultat(s)")
         else:
             # Recherche FFA
@@ -142,9 +217,13 @@ if search_term and len(search_term) >= 3 and st.session_state.get("last_search_t
         ]
         st.session_state["selected_athlete"] = None
         st.session_state["last_search_term"] = search_term
+        st.session_state["last_search_mode"] = include_wa_search
+        st.session_state["search_requested_main"] = False
 
         if not athletes and not include_wa_search:
             st.info("Aucun profil trouvé sur FFA. Activez 'Inclure les profils World Athletics' pour élargir la recherche.")
+        if not athletes and include_wa_search:
+            st.warning("Aucun profil WA trouvé. Vérifiez l'orthographe ou réessayez plus tard (API WA parfois indisponible).")
 
 athletes = st.session_state.get("athletes", [])
 athlete_options = st.session_state.get("athlete_options", [])
@@ -189,42 +268,85 @@ if selected:
         name_local = athlete["name"]
         club_local = athlete.get("club", "")
         sex_local = athlete.get("sex", "")
+        timings = {}
 
+        progress_container = st.empty()
+        progress_bar = st.progress(0)
+
+        def set_progress(progress_value: int, message: str):
+            progress_bar.progress(progress_value)
+            progress_container.info(message)
+
+        def wa_progress(message: str):
+            set_progress(45, message)
+
+        t0 = time.perf_counter()
+        set_progress(10, "Lecture des données en base…")
         df_local = get_results_from_db(seq_local)
+        timings["db_read_s"] = round(time.perf_counter() - t0, 3)
         if df_local.empty:
             is_wa_athlete = athlete.get("source") == "WA" or str(seq_local).startswith("WA_")
 
             if is_wa_athlete:
                 with st.spinner(f"Scraping World Athletics pour {name_local}…"):
-                    df_local = fetch_and_store_wa_results(name_local, engine)
+                    set_progress(30, "Profil introuvable en base: lancement scraping WA…")
+                    t_scrape = time.perf_counter()
+                    df_local = fetch_and_store_wa_results(
+                        name_local,
+                        engine,
+                        athlete_hint=athlete,
+                        progress_callback=wa_progress,
+                    )
+                    timings["wa_scrape_s"] = round(time.perf_counter() - t_scrape, 3)
                     if not df_local.empty:
-                        st.cache_data.clear()
+                        set_progress(85, "Actualisation du cache local…")
+                        get_results_from_db.clear()
+                        get_birth_year_from_db.clear()
                         st.success(f"Données WA ajoutées à la base pour {name_local}.")
                     else:
                         st.warning(f"Aucune donnée trouvée sur World Athletics pour {name_local}.")
             else:
                 with st.spinner(f"Scraping FFA pour {name_local}…"):
                     try:
+                        set_progress(30, "Profil introuvable en base: lancement scraping FFA…")
+                        t_scrape = time.perf_counter()
                         df_local = get_all_athlete_results(seq_local)
+                        timings["ffa_scrape_s"] = round(time.perf_counter() - t_scrape, 3)
                         if not df_local.empty:
+                            set_progress(60, "Nettoyage des résultats FFA…")
                             df_local = clean_and_prepare_results_df(df_local, seq_local)
+                            set_progress(75, "Insertion des résultats en base…")
                             save_athlete_info(seq_local, name_local, club_local, sex_local, engine)
                             save_results_to_postgres(df_local, seq_local, engine)
-                            st.cache_data.clear()
+                            get_results_from_db.clear()
+                            get_birth_year_from_db.clear()
                             st.success(f"Données FFA ajoutées à la base pour {name_local}.")
                         else:
                             st.info(f"Aucune donnée FFA pour {name_local}, tentative World Athletics…")
-                            df_local = fetch_and_store_wa_results(name_local, engine)
+                            t_wa_fallback = time.perf_counter()
+                            set_progress(45, "Bascule vers World Athletics…")
+                            df_local = fetch_and_store_wa_results(
+                                name_local,
+                                engine,
+                                athlete_hint=athlete,
+                                progress_callback=wa_progress,
+                            )
+                            timings["wa_fallback_s"] = round(time.perf_counter() - t_wa_fallback, 3)
                             if not df_local.empty:
-                                st.cache_data.clear()
+                                get_results_from_db.clear()
+                                get_birth_year_from_db.clear()
                                 st.success(f"Données WA ajoutées à la base pour {name_local}.")
                             else:
                                 st.warning(f"Aucune donnée trouvée sur FFA ni WA pour {name_local}.")
                     except Exception as e:
                         st.error(f"Erreur scraping FFA pour {name_local} : {e}")
         else:
+            set_progress(80, "Données trouvées en base, préparation de l'affichage…")
             if show_loaded_message:
                 st.success(f"Données chargées depuis la base pour {name_local}.")
+
+        set_progress(100, "Chargement terminé.")
+        progress_container.empty()
 
         return df_local
 
@@ -243,15 +365,30 @@ if selected:
             help="Activé: recherche World Athletics uniquement. Désactivé: recherche FFA uniquement.",
             key="include_wa_search_compare",
         )
-        search_term_compare = control_panel.text_input("Nom du 2e athlète", key="search_term_compare")
+        search_term_compare = control_panel.text_input(
+            "Nom du 2e athlète",
+            key="search_term_compare",
+            on_change=request_compare_search,
+        )
+        search_compare_clicked = control_panel.button("🔎 Rechercher le 2e athlète", key="search_compare_button")
+        control_panel.caption("Étape 2: cliquez sur le bouton puis sélectionnez le profil dans la liste déroulante.")
+
+        should_search_compare = False
+        search_requested_compare = st.session_state.get("search_requested_compare", False)
+        if search_term_compare and len(search_term_compare) >= 3:
+            should_search_compare = search_compare_clicked or search_requested_compare
+        elif search_compare_clicked or search_requested_compare:
+            st.info("Entrez au moins 3 caractères pour la recherche du 2e athlète.")
+            st.session_state["search_requested_compare"] = False
+
         if (
-            search_term_compare
-            and len(search_term_compare) >= 3
-            and st.session_state.get("last_search_term_compare") != search_term_compare
+            should_search_compare
         ):
             with st.spinner("Recherche du 2e athlète…"):
                 if include_wa_compare:
                     athletes_compare = search_wa_athletes(search_term_compare)
+                    if not athletes_compare:
+                        athletes_compare = search_athletes_from_db(search_term_compare, wa_only=True)
                 else:
                     athletes_compare = search_athletes_smart(search_term_compare)
                     if not athletes_compare:
@@ -263,6 +400,8 @@ if selected:
                 ]
                 st.session_state["selected_athlete_compare"] = None
                 st.session_state["last_search_term_compare"] = search_term_compare
+                st.session_state["last_search_mode_compare"] = include_wa_compare
+                st.session_state["search_requested_compare"] = False
 
                 if not athletes_compare and not include_wa_compare:
                     st.info("Aucun profil FFA pour le 2e athlète. Activez la recherche World Athletics si besoin.")

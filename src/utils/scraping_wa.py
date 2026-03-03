@@ -7,6 +7,8 @@ from datetime import datetime
 from tqdm.auto import tqdm
 import os
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -15,7 +17,36 @@ load_dotenv()
 WA_API_URL = os.getenv('WA_API_URL')
 WA_API_KEY = os.getenv('WA_API_KEY')
 
-def get_athlete_results_by_name(athlete_name, start_year=1960, end_year=None, use_threading=True, max_workers=10):
+_DEFAULT_TIMEOUT = (4, 12)
+
+
+def _build_session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=2,
+        read=2,
+        connect=2,
+        backoff_factor=0.4,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=frozenset(["POST"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_WA_SESSION = _build_session()
+
+def get_athlete_results_by_name(
+    athlete_name,
+    start_year=1990,
+    end_year=None,
+    use_threading=True,
+    max_workers=6,
+    max_total_seconds=18,
+):
     """
     Récupère tous les résultats de compétition d'un athlète en le recherchant par son nom.
     Version optimisée avec multithreading pour accélérer le scraping.
@@ -52,7 +83,8 @@ def get_athlete_results_by_name(athlete_name, start_year=1960, end_year=None, us
                 start_year, 
                 end_year, 
                 use_threading=use_threading,
-                max_workers=max_workers
+                max_workers=max_workers,
+                max_total_seconds=max_total_seconds,
             )
             
             # Mesurer le temps total d'exécution
@@ -85,7 +117,12 @@ def search_athletes_by_name(athlete_name):
         pd.DataFrame: DataFrame contenant les informations de l'athlète
         ou un message d'erreur si la recherche échoue
     """
-    headers = {"x-api-key": WA_API_KEY}
+    headers = {
+        "accept": "*/*",
+        "content-type": "application/json",
+        "x-amz-user-agent": "aws-amplify/3.0.2",
+        "x-api-key": WA_API_KEY,
+    }
     payload = {
         "operationName": "SearchCompetitors",
         "variables": {
@@ -109,26 +146,39 @@ def search_athletes_by_name(athlete_name):
         """
     }
     
-    try:
-        response = requests.post(WA_API_URL, json=payload, headers=headers)
-        response.raise_for_status()
-        
-        json_data = response.json()
-        athletes_data = json_data.get("data", {}).get("searchCompetitors", [])
-        
-        if athletes_data:
-            first_athlete = athletes_data[0]
-            df = pd.json_normalize(first_athlete)
-            return df
-        else:
-            return f"Aucun résultat trouvé pour l'athlète: {athlete_name}"
-            
-    except requests.exceptions.RequestException as e:
-        return f"Erreur de requête: {str(e)}"
-    except JSONDecodeError as e:
-        return f"Erreur de décodage JSON: {str(e)}"
-    except Exception as e:
-        return f"Erreur inattendue: {str(e)}"
+    for attempt in range(1, 4):
+        try:
+            response = _WA_SESSION.post(
+                WA_API_URL,
+                json=payload,
+                headers=headers,
+                timeout=(8, 25),
+            )
+            response.raise_for_status()
+
+            json_data = response.json()
+            athletes_data = json_data.get("data", {}).get("searchCompetitors", [])
+
+            if athletes_data:
+                df = pd.json_normalize(athletes_data)
+                return df
+
+            return pd.DataFrame()
+
+        except JSONDecodeError as e:
+            print(f"Erreur de décodage JSON WA: {str(e)}")
+            if attempt < 3:
+                time.sleep(0.4 * attempt)
+                continue
+            return pd.DataFrame()
+
+        except requests.exceptions.RequestException as e:
+            if attempt < 3:
+                time.sleep(0.4 * attempt)
+                continue
+            return pd.DataFrame()
+
+    return pd.DataFrame()
 
 def fetch_year_data(athlete_id, year):
     """
@@ -192,7 +242,7 @@ def fetch_year_data(athlete_id, year):
     }
     
     try:
-        response = requests.post(WA_API_URL, json=payload, headers=headers)
+        response = _WA_SESSION.post(WA_API_URL, json=payload, headers=headers, timeout=_DEFAULT_TIMEOUT)
         response.raise_for_status()
         
         data = response.json()
@@ -223,7 +273,14 @@ def fetch_year_data(athlete_id, year):
     except Exception as e:
         return year, None, []
 
-def get_athlete_competition_results(athlete_id, start_year=1990, end_year=None, use_threading=True, max_workers=10):
+def get_athlete_competition_results(
+    athlete_id,
+    start_year=1990,
+    end_year=None,
+    use_threading=True,
+    max_workers=10,
+    max_total_seconds=18,
+):
     """
     Récupère tous les résultats de compétition d'un athlète par son ID.
     Version optimisée avec support du multithreading.
@@ -241,19 +298,28 @@ def get_athlete_competition_results(athlete_id, start_year=1990, end_year=None, 
     if end_year is None:
         end_year = datetime.now().year
 
+    start_year = int(start_year)
+    end_year = int(end_year)
+    if start_year > end_year:
+        start_year = end_year
+
     all_years = list(range(start_year, end_year + 1))
     df_list = []
     all_active_years = set()
+    start_exec_time = time.perf_counter()
     
     # ÉTAPE 1 : Récupérer seulement les années actives d'abord
-    first_year = all_years[0]
+    first_year = end_year
     print(f"Recherche des années actives pour l'athlète ID: {athlete_id}...")
     _, _, active_years = fetch_year_data(athlete_id, first_year)
     
     # Si nous avons des années actives, ne récupérer que ces années
     if active_years:
         all_active_years.update(active_years)
-        filtered_years = [y for y in all_years if y in active_years]
+        filtered_years = sorted(
+            y for y in set(active_years)
+            if start_year <= int(y) <= end_year
+        )
         print(f"Années actives trouvées: {sorted(active_years)}")
         print(f"Récupération des données pour {len(filtered_years)} années au lieu de {len(all_years)}")
     else:
@@ -263,9 +329,10 @@ def get_athlete_competition_results(athlete_id, start_year=1990, end_year=None, 
     
     # ÉTAPE 2 : Récupérer les données pour les années filtrées
     if use_threading and len(filtered_years) > 1:
-        print(f"Utilisation du multithreading avec {min(max_workers, len(filtered_years))} workers...")
+        workers = min(max_workers, len(filtered_years))
+        print(f"Utilisation du multithreading avec {workers} workers...")
         # Utiliser ThreadPoolExecutor pour le multithreading
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(filtered_years))) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
             # Soumettre toutes les tâches et créer un dict pour suivre les résultats
             future_to_year = {
                 executor.submit(fetch_year_data, athlete_id, year): year 
@@ -274,6 +341,13 @@ def get_athlete_competition_results(athlete_id, start_year=1990, end_year=None, 
             
             # Utiliser tqdm pour afficher une barre de progression
             for future in tqdm(concurrent.futures.as_completed(future_to_year), total=len(filtered_years), desc="Récupération des données"):
+                elapsed = time.perf_counter() - start_exec_time
+                if elapsed > max_total_seconds:
+                    print(f"Arrêt anticipé WA après {elapsed:.1f}s pour préserver l'expérience utilisateur.")
+                    for pending in future_to_year:
+                        if not pending.done():
+                            pending.cancel()
+                    break
                 year = future_to_year[future]
                 try:
                     year, df, active_years = future.result()
@@ -289,6 +363,10 @@ def get_athlete_competition_results(athlete_id, start_year=1990, end_year=None, 
     else:
         # Version séquentielle pour les cas simples
         for year in tqdm(filtered_years, desc="Récupération des données"):
+            elapsed = time.perf_counter() - start_exec_time
+            if elapsed > max_total_seconds:
+                print(f"Arrêt anticipé WA après {elapsed:.1f}s pour préserver l'expérience utilisateur.")
+                break
             year, df, active_years = fetch_year_data(athlete_id, year)
             if df is not None:
                 print(f"✓ Données récupérées pour l'année {year} ({len(df)} résultats)")
