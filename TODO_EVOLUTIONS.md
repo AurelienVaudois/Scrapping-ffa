@@ -15,14 +15,14 @@
 ## Backlog (classé par priorité puis numéro)
 | # | Tâche | MoSCoW | Complexité (T-Shirt) | Notes |
 |---|---|---|---|---|
-| 1 | Vérifier l’affichage sur téléphone et créer une version spécifique si nécessaire | Should | L | 🔄 En cours |
+| 1 | Vérifier l’affichage sur téléphone et créer une version spécifique si nécessaire | Should | L | 🔄 En cours - améliorations UX mobile/sidebar déjà livrées (guidage recherche, ordre des contrôles) |
 | 2 | Améliorer le scraping FFA (nom + prénom): éviter le fallback WA trop tôt pour les profils licenciés en France | Should | L | ✅ Fait |
 | 4 | Créer un script de mise à jour de la base avec les nouveaux résultats | Should | S | ✅ Fait - script incrémental idempotent + loop + logs |
-| 9 | Mettre en place un monitoring de l’app (usage, vitesse) sur Streamlit Cloud puis sur autre provider si nécessaire | Should | L |  |
+| 9 | Mettre en place un monitoring de l’app (usage, vitesse) sur Streamlit Cloud puis sur autre provider si nécessaire | Should | L | 🟡 Partiel - instrumentation ponctuelle des temps de chargement déjà testée, monitoring centralisé restant à industrialiser |
 | 10 | N’afficher le volet déroulant que pour les épreuves avec performances disponibles | Should | M | ✅ Fait |
 | 11 | Migration GCP | Should | L |  |
 | 12 | Création d’un site | Should | L |  |
-| 3 | Optimiser la vitesse de scraping | Could | M |  |
+| 3 | Optimiser la vitesse de scraping | Could | M | ✅ Fait - optimisation WA (timeouts/retries/session), bornage années, fallback DB WA, progression de chargement |
 | 5 | Ajouter de nouvelles distances (1000m, 110m haies, 400m haies) | Could | S |  |
 | 6 | Ajouter les sauts et les lancers | Could | M |  |
 | 7 | Ajouter des stats descriptives sous le graphe | Won't | S |  |

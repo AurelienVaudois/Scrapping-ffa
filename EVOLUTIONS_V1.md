@@ -44,6 +44,15 @@ La version 1 offre une expérience plus intuitive, plus lisible, et plus flexibl
 	- demi-fond/fond en minutes:secondes,
 	- semi/marathon en heures:minutes.
 
+## Réalisation tâche 3 - Optimisation vitesse scraping + UX de chargement
+- Optimisation du pipeline WA côté requêtes: session HTTP réutilisée, retries, timeouts bornés et meilleure résilience aux erreurs transitoires API.
+- Réduction de la variabilité WA grâce à un bornage dynamique des années scrappées (fenêtre utile + active years).
+- Fiabilisation de la recherche WA: meilleure sélection de candidat et fallback de recherche locale en base (`WA_`) si l’API WA est temporairement indisponible.
+- Amélioration du parcours de recherche: lancement explicite via bouton Rechercher (athlète principal et athlète de comparaison), avec support de la touche Entrée.
+- Amélioration du feedback utilisateur pendant le chargement: progression par étapes (lecture base, scraping, insertion, affichage).
+- Affinage UX mobile/sidebar: ordre des contrôles de comparaison clarifié (saisie → bouton → sélection).
+- Nettoyage UI: suppression de l’affichage des métriques techniques de timing pour garder une interface utilisateur plus lisible.
+
 ## Réalisation tâche 4 - Script de mise à jour DB
 - Mise en place d’un script d’update incrémental dédié via `update_athletes.py` (mode one-shot et mode boucle).
 - Traitement idempotent: re-scrape des résultats puis insertion des seules nouvelles lignes via déduplication en base.
