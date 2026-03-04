@@ -268,19 +268,6 @@ include_wa_search = control_panel.toggle(
 )
 control_panel.caption("Étape 1: tapez un nom puis appuyez sur Entrée ou sur Rechercher.")
 
-control_panel.subheader("Feedback")
-control_panel.caption("Un retour rapide aide à prioriser les prochaines évolutions produit.")
-if FEEDBACK_FORM_URL:
-    feedback_clicked = control_panel.link_button(
-        "💬 Donner mon avis",
-        FEEDBACK_FORM_URL,
-        use_container_width=True,
-    )
-    if feedback_clicked:
-        print("event=feedback_link_clicked")
-else:
-    control_panel.info("Ajoutez `FEEDBACK_FORM_URL` dans les secrets ou les variables d'environnement.")
-
 # -----------------------------------------------------------------------------
 # 1. Recherche d'athlètes ------------------------------------------------------
 # -----------------------------------------------------------------------------
@@ -826,3 +813,17 @@ if selected:
             df_table[["athlete", "date", "perf", "time", "ville", "tour", "epreuve"]],
             use_container_width=True,
         )
+
+control_panel.divider()
+control_panel.subheader("Feedback")
+control_panel.caption("Un retour rapide aide à prioriser les prochaines évolutions produit.")
+if FEEDBACK_FORM_URL:
+    feedback_clicked = control_panel.link_button(
+        "💬 Donner mon avis",
+        FEEDBACK_FORM_URL,
+        use_container_width=True,
+    )
+    if feedback_clicked:
+        print("event=feedback_link_clicked")
+else:
+    control_panel.info("Ajoutez `FEEDBACK_FORM_URL` dans les secrets ou les variables d'environnement.")
