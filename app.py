@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 import os
 import math
 import time
+from urllib.parse import urlparse, parse_qs
 import plotly.graph_objects as go
 from src.utils.http_utils import (
     search_athletes,                                        # FFA autocomplete (legacy)
@@ -24,6 +25,14 @@ from src.utils.athlete_utils import (
 from src.utils.file_utils import convert_time_to_seconds
 from src.utils.ffa_fast import get_all_results_fast as get_all_athlete_results
 
+
+def get_optional_secret(secret_key: str, env_key: str, default_value: str = "") -> str:
+    try:
+        value = st.secrets[secret_key]
+        return str(value).strip()
+    except Exception:
+        return str(os.getenv(env_key, default_value) or "").strip()
+
 # -----------------------------------------------------------------------------
 # DB connexion ----------------------------------------------------------------
 # -----------------------------------------------------------------------------
@@ -38,11 +47,68 @@ except Exception:
     WA_API_URL = os.getenv("WA_API_URL")
     WA_API_KEY = os.getenv("WA_API_KEY")
 engine = create_engine(db_url)
+TUTORIAL_VIDEO_URL = get_optional_secret(
+    "TUTORIAL_VIDEO_URL",
+    "TUTORIAL_VIDEO_URL",
+    "https://youtube.com/shorts/ZGDVpqcfajo?si=QFlCtt3rTM8gXS3b",
+)
+FEEDBACK_FORM_URL = get_optional_secret("FEEDBACK_FORM_URL", "FEEDBACK_FORM_URL", "")
 # ----------------------------------------------------------------------------- 
 # UI settings -----------------------------------------------------------------
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Athlé Analyse", layout="wide")
+dialog_decorator = getattr(st, "dialog", None) or getattr(st, "experimental_dialog", None)
+
+
+def render_tutorial_video():
+    if not TUTORIAL_VIDEO_URL:
+        st.info("Ajoutez `TUTORIAL_VIDEO_URL` dans les secrets Streamlit ou dans les variables d'environnement.")
+        return
+
+    def normalize_youtube_url(video_url: str) -> str:
+        try:
+            parsed = urlparse(video_url)
+            host = parsed.netloc.lower()
+            path = parsed.path or ""
+
+            if "youtube.com" in host and "/shorts/" in path:
+                video_id = path.split("/shorts/")[-1].split("/")[0].strip()
+                if video_id:
+                    return f"https://www.youtube.com/watch?v={video_id}"
+
+            if "youtu.be" in host:
+                video_id = path.lstrip("/").split("/")[0].strip()
+                if video_id:
+                    return f"https://www.youtube.com/watch?v={video_id}"
+
+            if "youtube.com" in host and "/watch" in path:
+                query = parse_qs(parsed.query)
+                video_ids = query.get("v", [])
+                if video_ids:
+                    return f"https://www.youtube.com/watch?v={video_ids[0]}"
+        except Exception:
+            return video_url
+
+        return video_url
+
+    st.video(normalize_youtube_url(TUTORIAL_VIDEO_URL), loop=False, autoplay=False, muted=True)
+
+
+if dialog_decorator is not None:
+    @dialog_decorator("Comment utiliser l'app", width="large")
+    def show_tutorial_video(_item=None):
+        render_tutorial_video()
+else:
+    def show_tutorial_video(_item=None):
+        st.session_state["show_tutorial_inline"] = True
+
+
 st.title("Analyse des performances athlétisme")
+
+if dialog_decorator is None and st.session_state.get("show_tutorial_inline", False):
+    with st.expander("How to use", expanded=True):
+        render_tutorial_video()
+
 st.markdown(
     """
     ### 📈 Suivi des performances athlétiques
@@ -61,6 +127,19 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+st.markdown("### 🎬 Prise en main rapide")
+tutorial_left, tutorial_center, tutorial_right = st.columns([1, 2.2, 1])
+with tutorial_center:
+    if st.button(
+        "▶️ HOW TO USE — VOIR LE TUTORIEL",
+        use_container_width=True,
+        type="primary",
+        key="open_tutorial_button",
+    ):
+        print("event=tutorial_open_clicked")
+        show_tutorial_video("open")
+    st.caption("Cliquez pour ouvrir la vidéo tutoriel directement dans l'application.")
 
 control_panel = st.sidebar
 control_panel.title("🎛️ Contrôles")
@@ -84,6 +163,8 @@ if "search_requested_main" not in st.session_state:
     st.session_state["search_requested_main"] = False
 if "search_requested_compare" not in st.session_state:
     st.session_state["search_requested_compare"] = False
+if "show_tutorial_inline" not in st.session_state:
+    st.session_state["show_tutorial_inline"] = False
 
 
 def request_main_search():
@@ -186,6 +267,19 @@ include_wa_search = control_panel.toggle(
     key="include_wa_search",
 )
 control_panel.caption("Étape 1: tapez un nom puis appuyez sur Entrée ou sur Rechercher.")
+
+control_panel.subheader("Feedback")
+control_panel.caption("Un retour rapide aide à prioriser les prochaines évolutions produit.")
+if FEEDBACK_FORM_URL:
+    feedback_clicked = control_panel.link_button(
+        "💬 Donner mon avis",
+        FEEDBACK_FORM_URL,
+        use_container_width=True,
+    )
+    if feedback_clicked:
+        print("event=feedback_link_clicked")
+else:
+    control_panel.info("Ajoutez `FEEDBACK_FORM_URL` dans les secrets ou les variables d'environnement.")
 
 # -----------------------------------------------------------------------------
 # 1. Recherche d'athlètes ------------------------------------------------------

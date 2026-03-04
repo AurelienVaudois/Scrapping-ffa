@@ -60,3 +60,11 @@ La version 1 offre une expérience plus intuitive, plus lisible, et plus flexibl
 - Ajout d’un résumé de batch (total, succès, échecs, lignes insérées) pour faciliter le suivi opérationnel.
 - Correction WA: année de fin dynamique (année courante) pour ne pas bloquer à 2025.
 - Durcissement de l’exécution Windows avec `update_loop.bat` (activation venv, création auto du dossier logs, journalisation dans `logs/update.log`).
+
+## Réalisation tâche 13 - Tutoriel intégré + collecte de feedback
+- Ajout d’un bouton `How to use` dans le header principal pour ouvrir une vidéo tutoriel directement dans l’app.
+- Implémentation robuste côté Streamlit: usage de `st.dialog` / `st.experimental_dialog` quand disponible, avec fallback inline si indisponible.
+- Paramétrage de la source vidéo via `TUTORIAL_VIDEO_URL` (secrets ou variable d’environnement) pour faciliter les mises à jour sans modification de code.
+- Ajout d’un module `Feedback` dans la sidebar avec lien direct vers un formulaire externe (Google Form / Typeform).
+- Paramétrage du formulaire via `FEEDBACK_FORM_URL` (secrets ou variable d’environnement).
+- Ajout d’une instrumentation légère (events de clic) dans les logs applicatifs pour mesurer l’usage du tutoriel et du module feedback.

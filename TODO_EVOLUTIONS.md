@@ -22,6 +22,7 @@
 | 10 | N’afficher le volet déroulant que pour les épreuves avec performances disponibles | Should | M | ✅ Fait |
 | 11 | Migration GCP | Should | L |  |
 | 12 | Création d’un site | Should | L |  |
+| 13 | Ajouter un bouton tutoriel et un module feedback dans l’app | Should | S | ✅ Fait - bouton `How to use` en header + lien feedback externe paramétrable |
 | 3 | Optimiser la vitesse de scraping | Could | M | ✅ Fait - optimisation WA (timeouts/retries/session), bornage années, fallback DB WA, progression de chargement |
 | 5 | Ajouter de nouvelles distances (1000m, 110m haies, 400m haies) | Could | S |  |
 | 6 | Ajouter les sauts et les lancers | Could | M |  |
